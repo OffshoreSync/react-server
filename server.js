@@ -21,9 +21,13 @@ connection.once('open', () => {
   console.log('MongoDB database connection established successfully');
 });
 
+// Routes
+const authRoutes = require('./routes/auth');
+app.use('/api/auth', authRoutes);
+
 // Basic route
 app.get('/', (req, res) => {
-  res.send('Welcome to the MERN Stack Application');
+  res.send('Welcome to the Offshore Worker Calendar Application');
 });
 
 // Start server
