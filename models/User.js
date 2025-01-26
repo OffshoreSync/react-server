@@ -1,6 +1,21 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+const WorkingRegimeSchema = new mongoose.Schema({
+  onDutyDays: {
+    type: Number,
+    required: true,
+    min: 7,
+    max: 365
+  },
+  offDutyDays: {
+    type: Number,
+    required: true,
+    min: 7,
+    max: 365
+  }
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
   username: {
     type: String,
@@ -32,13 +47,14 @@ const UserSchema = new mongoose.Schema({
     required: true
   },
   workingRegime: {
-    type: Number,
+    type: WorkingRegimeSchema,
     required: true,
     validate: {
-      validator: function(v) {
-        return v === 7 || v === 14 || v === 28 || (v > 28 && v <= 365);
+      validator: function(regime) {
+        // Ensure total days don't exceed 365
+        return (regime.onDutyDays + regime.offDutyDays) <= 365;
       },
-      message: props => `${props.value} is not a valid working regime! Must be 7, 14, 28, or between 29-365.`
+      message: 'Total on and off duty days must not exceed 365'
     }
   },
   company: {
@@ -67,6 +83,15 @@ const UserSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// Predefined working regimes
+UserSchema.statics.getPredefinedRegimes = function() {
+  return {
+    '7/7': { onDutyDays: 7, offDutyDays: 7 },
+    '14/14': { onDutyDays: 14, offDutyDays: 14 },
+    '28/28': { onDutyDays: 28, offDutyDays: 28 }
+  };
+};
 
 // Hash password before saving
 UserSchema.pre('save', async function(next) {

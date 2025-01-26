@@ -25,6 +25,13 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'User already exists with this username or email' });
     }
 
+    // Validate working regime
+    if (!workingRegime || 
+        typeof workingRegime.onDutyDays !== 'number' || 
+        typeof workingRegime.offDutyDays !== 'number') {
+      return res.status(400).json({ message: 'Invalid working regime format' });
+    }
+
     // Create new user
     const newUser = new User({
       username,
@@ -32,7 +39,10 @@ router.post('/register', async (req, res) => {
       password,
       fullName,
       offshoreRole,
-      workingRegime,
+      workingRegime: {
+        onDutyDays: workingRegime.onDutyDays,
+        offDutyDays: workingRegime.offDutyDays
+      },
       company,
       unitName,
       country
