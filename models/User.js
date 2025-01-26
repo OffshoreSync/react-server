@@ -72,6 +72,10 @@ const UserSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  nextOnBoardDate: {
+    type: Date,
+    default: null
+  },
   workSchedule: {
     type: Object,
     default: {}
