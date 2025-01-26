@@ -124,6 +124,10 @@ router.post('/login', async (req, res) => {
         email: user.email,
         fullName: user.fullName,
         offshoreRole: user.offshoreRole,
+        workingRegime: user.workingRegime || {
+          onDutyDays: 28,
+          offDutyDays: 28
+        },
         company: user.company,
         unitName: user.unitName,
         country: user.country
