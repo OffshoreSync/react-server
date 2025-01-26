@@ -31,6 +31,31 @@ const UserSchema = new mongoose.Schema({
     enum: ['Drilling', 'Production', 'Maintenance', 'Support', 'Management'],
     required: true
   },
+  workingRegime: {
+    type: Number,
+    required: true,
+    validate: {
+      validator: function(v) {
+        return v === 7 || v === 14 || v === 28 || (v > 28 && v <= 365);
+      },
+      message: props => `${props.value} is not a valid working regime! Must be 7, 14, 28, or between 29-365.`
+    }
+  },
+  company: {
+    type: String,
+    trim: true,
+    default: null
+  },
+  unitName: {
+    type: String,
+    trim: true,
+    default: null
+  },
+  country: {
+    type: String,
+    required: true,
+    trim: true
+  },
   workSchedule: {
     type: Object,
     default: {}
