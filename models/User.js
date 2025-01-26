@@ -80,6 +80,25 @@ const UserSchema = new mongoose.Schema({
     type: Object,
     default: {}
   },
+  workCycles: [{
+    startDate: {
+      type: Date,
+      required: true
+    },
+    endDate: {
+      type: Date,
+      required: true
+    },
+    type: {
+      type: String,
+      enum: ['OnBoard', 'OffBoard'],
+      required: true
+    },
+    cycleNumber: {
+      type: Number,
+      required: true
+    }
+  }],
   createdAt: {
     type: Date,
     default: Date.now

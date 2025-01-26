@@ -459,4 +459,110 @@ router.put('/set-onboard-date', async (req, res) => {
   }
 });
 
+// Generate and save work cycles for a user
+router.post('/generate-work-cycles', async (req, res) => {
+  try {
+    // Get token from headers
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token expired', 
+          error: 'TokenExpiredError',
+          requiresReAuthentication: true 
+        });
+      }
+      throw error;
+    }
+
+    // Find the user and populate all necessary fields
+    const user = await User.findById(decoded.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Get working regime from user
+    const { onDutyDays, offDutyDays } = user.workingRegime;
+
+    // Clear existing work cycles
+    user.workCycles = [];
+
+    // Generate work cycles for the next 2 years
+    const nextOnBoardDate = new Date(user.workSchedule.nextOnBoardDate);
+    const twoYearsFromNow = new Date(nextOnBoardDate);
+    twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
+
+    let currentDate = nextOnBoardDate;
+    let cycleNumber = 1;
+
+    while (currentDate < twoYearsFromNow) {
+      // On Board cycle
+      const onBoardStart = new Date(currentDate);
+      const onBoardEnd = new Date(currentDate);
+      onBoardEnd.setDate(onBoardEnd.getDate() + onDutyDays);
+
+      user.workCycles.push({
+        startDate: onBoardStart,
+        endDate: onBoardEnd,
+        type: 'OnBoard',
+        cycleNumber
+      });
+
+      // Move to Off Board cycle
+      currentDate = new Date(onBoardEnd);
+      const offBoardStart = new Date(currentDate);
+      const offBoardEnd = new Date(currentDate);
+      offBoardEnd.setDate(offBoardEnd.getDate() + offDutyDays);
+
+      user.workCycles.push({
+        startDate: offBoardStart,
+        endDate: offBoardEnd,
+        type: 'OffBoard',
+        cycleNumber
+      });
+
+      // Prepare for next cycle
+      currentDate = offBoardEnd;
+      cycleNumber++;
+    }
+
+    // Save the user with new work cycles
+    await user.save();
+
+    // Prepare response with full user data
+    const userResponse = {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      fullName: user.fullName,
+      workSchedule: user.workSchedule,
+      workingRegime: user.workingRegime,
+      workCycles: user.workCycles
+    };
+
+    res.status(200).json({ 
+      message: 'Work cycles generated successfully',
+      user: userResponse,
+      workCycles: user.workCycles
+    });
+
+  } catch (error) {
+    console.error('Error generating work cycles:', error);
+    res.status(500).json({ 
+      message: 'Server error while generating work cycles',
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;
