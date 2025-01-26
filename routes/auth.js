@@ -93,30 +93,34 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Find user
+    // Find user by username
     const user = await User.findOne({ username });
+
     if (!user) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(400).json({ message: 'Invalid username or password' });
     }
 
     // Check password
     const isMatch = await user.comparePassword(password);
+
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(400).json({ message: 'Invalid username or password' });
     }
 
-    // Create JWT token
+    // Generate token
     const token = jwt.sign(
       { 
         userId: user._id, 
-        username: user.username 
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName
       }, 
       process.env.JWT_SECRET, 
       { expiresIn: '1h' }
     );
 
-    res.json({ 
-      message: 'Login successful',
+    // Explicitly include all fields in the response
+    res.json({
       token,
       user: {
         id: user._id,
@@ -124,13 +128,15 @@ router.post('/login', async (req, res) => {
         email: user.email,
         fullName: user.fullName,
         offshoreRole: user.offshoreRole,
-        workingRegime: user.workingRegime || {
-          onDutyDays: 28,
-          offDutyDays: 28
-        },
-        company: user.company,
-        unitName: user.unitName,
-        country: user.country
+        workingRegime: user.workingRegime,
+        company: user.company || null,
+        workSchedule: user.workSchedule || {},
+        
+        // Explicitly include these fields with null fallback
+        unitName: user.unitName || null,
+        country: user.country || null,
+        
+        nextOnBoardDate: user.nextOnBoardDate || null
       }
     });
   } catch (error) {
@@ -150,7 +156,19 @@ router.delete('/delete-account', async (req, res) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token expired', 
+          error: 'TokenExpiredError',
+          requiresReAuthentication: true 
+        });
+      }
+      throw error;
+    }
 
     // Find and delete user
     const user = await User.findByIdAndDelete(decoded.userId);
@@ -174,6 +192,9 @@ router.delete('/delete-account', async (req, res) => {
 // Update user profile
 router.put('/update-profile', async (req, res) => {
   try {
+    // Log incoming request body for debugging
+    console.log('Received profile update request:', JSON.stringify(req.body, null, 2));
+
     // Get token from headers
     const token = req.headers.authorization?.split(' ')[1];
 
@@ -182,7 +203,19 @@ router.put('/update-profile', async (req, res) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token expired', 
+          error: 'TokenExpiredError',
+          requiresReAuthentication: true 
+        });
+      }
+      throw error;
+    }
 
     // Find user
     const user = await User.findById(decoded.userId);
@@ -191,7 +224,7 @@ router.put('/update-profile', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Destructure request body
+    // Destructure request body with explicit handling
     const { 
       username, 
       email, 
@@ -199,82 +232,136 @@ router.put('/update-profile', async (req, res) => {
       offshoreRole, 
       workingRegime,
       company, 
-      unitName, 
-      country 
+      workSchedule,
+      country,
+      unitName
     } = req.body;
 
-    // Validate working regime
-    if (!workingRegime || 
-        typeof workingRegime.onDutyDays !== 'number' || 
-        typeof workingRegime.offDutyDays !== 'number') {
-      return res.status(400).json({ message: 'Invalid working regime format' });
-    }
+    // Update user fields with explicit preservation
+    if (username) user.username = username;
+    if (email) user.email = email;
+    if (fullName) user.fullName = fullName;
+    if (offshoreRole) user.offshoreRole = offshoreRole;
+    if (workingRegime) user.workingRegime = workingRegime;
+    if (company) user.company = company;
+    if (workSchedule) user.workSchedule = workSchedule;
+    
+    // Explicitly handle country and unitName with logging
+    console.log('Incoming country:', country);
+    console.log('Incoming unitName:', unitName);
+    console.log('Existing user country:', user.country);
+    console.log('Existing user unitName:', user.unitName);
 
-    // Check if new username or email already exists (excluding current user)
-    const existingUser = await User.findOne({ 
-      $or: [{ username }, { email }],
-      _id: { $ne: user._id } 
-    });
-
-    if (existingUser) {
-      return res.status(400).json({ message: 'Username or email already in use' });
-    }
-
-    // Update user fields
-    user.username = username;
-    user.email = email;
-    user.fullName = fullName;
-    user.offshoreRole = offshoreRole;
-    user.workingRegime = {
-      onDutyDays: workingRegime.onDutyDays,
-      offDutyDays: workingRegime.offDutyDays
-    };
-    user.company = company || null;
-    user.unitName = unitName || null;
-    user.country = country;
+    // Preserve existing values if not provided
+    if (country !== undefined) user.country = country;
+    if (unitName !== undefined) user.unitName = unitName;
 
     // Save updated user
     await user.save();
 
-    // Generate new token (optional, but can be useful if needed)
+    // Log saved user for verification
+    console.log('Updated user:', {
+      country: user.country,
+      unitName: user.unitName
+    });
+
+    // Generate new token with updated information
     const newToken = jwt.sign(
       { 
         userId: user._id, 
-        username: user.username 
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName
       }, 
       process.env.JWT_SECRET, 
       { expiresIn: '1h' }
     );
 
-    // Prepare user response (excluding password)
-    const userResponse = {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
-      offshoreRole: user.offshoreRole,
-      workingRegime: user.workingRegime,
-      company: user.company,
-      unitName: user.unitName,
-      country: user.country
-    };
-
+    // Explicitly include all fields in the response
     res.json({ 
       message: 'Profile updated successfully', 
-      user: userResponse,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        offshoreRole: user.offshoreRole,
+        workingRegime: user.workingRegime,
+        company: user.company || null,
+        workSchedule: user.workSchedule || {},
+        
+        // Explicitly include these fields with null fallback
+        unitName: user.unitName || null,
+        country: user.country || null,
+        
+        nextOnBoardDate: user.nextOnBoardDate || null
+      },
       token: newToken
     });
   } catch (error) {
     console.error('Profile update error:', error);
     
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token' });
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ message: 'Validation error', details: error.errors });
     }
 
-    res.status(500).json({ 
-      message: 'Server error during profile update',
-      error: error.message 
+    res.status(500).json({ message: 'Server error during profile update', error: error.message });
+  }
+});
+
+// Get User Profile
+router.get('/profile', async (req, res) => {
+  try {
+    // Get token from headers
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token expired', 
+          error: 'TokenExpiredError',
+          requiresReAuthentication: true 
+        });
+      }
+      throw error;
+    }
+
+    // Find user
+    const user = await User.findById(decoded.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Return user profile (excluding sensitive information)
+    res.json({ 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        offshoreRole: user.offshoreRole,
+        workingRegime: user.workingRegime || {
+          onDutyDays: 28,
+          offDutyDays: 28
+        },
+        company: user.company,
+        workSchedule: user.workSchedule,
+        unitName: user.unitName || null,
+        country: user.country || null
+      }
     });
+  } catch (error) {
+    console.error('Profile retrieval error:', error);
+    res.status(500).json({ message: 'Server error during profile retrieval' });
   }
 });
 
@@ -289,7 +376,19 @@ router.put('/set-onboard-date', async (req, res) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token expired', 
+          error: 'TokenExpiredError',
+          requiresReAuthentication: true 
+        });
+      }
+      throw error;
+    }
 
     // Find user
     const user = await User.findById(decoded.userId);
