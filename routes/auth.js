@@ -397,85 +397,65 @@ router.put('/set-onboard-date', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Get the On Board date from request body
+    // Get on board date from request
     const { nextOnBoardDate } = req.body;
 
-    // Validate date
     if (!nextOnBoardDate) {
-      return res.status(400).json({ message: 'Next On Board date is required' });
+      return res.status(400).json({ message: 'Next on board date is required' });
     }
 
-    // Validate date format and ensure it's a valid date
-    const parsedDate = new Date(nextOnBoardDate);
-    if (isNaN(parsedDate.getTime())) {
-      return res.status(400).json({ message: 'Invalid date format' });
-    }
+    // Ensure working regime is set
+    const onDutyDays = user.workingRegime?.onDutyDays || 14;
+    const offDutyDays = user.workingRegime?.offDutyDays || 14;
 
-    // Ensure date is in the future
-    const today = new Date();
-    if (parsedDate < today) {
-      return res.status(400).json({ message: 'On Board date must be in the future' });
-    }
-
-    // Calculate Off Board date based on working regime
-    const onDutyDays = user.workingRegime.onDutyDays;
-    const offDutyDays = user.workingRegime.offDutyDays;
-
-    const offBoardDate = new Date(parsedDate);
+    // Calculate off board date based on current working regime
+    const onBoardDate = new Date(nextOnBoardDate);
+    const offBoardDate = new Date(onBoardDate);
     offBoardDate.setDate(offBoardDate.getDate() + onDutyDays);
 
-    // Update user with On Board and Off Board dates
-    user.nextOnBoardDate = parsedDate;
+    // Update user's work schedule
     user.workSchedule = {
-      nextOnBoardDate: parsedDate,
-      nextOffBoardDate: offBoardDate,
-      workingRegime: user.workingRegime
+      nextOnBoardDate: onBoardDate,
+      nextOffBoardDate: offBoardDate
     };
 
     // Save updated user
     await user.save();
 
-    // Prepare user response (excluding password)
-    const userResponse = {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
-      offshoreRole: user.offshoreRole,
-      workingRegime: user.workingRegime,
-      company: user.company,
-      unitName: user.unitName,
-      country: user.country,
-      nextOnBoardDate: user.nextOnBoardDate,
-      workSchedule: user.workSchedule
-    };
-
-    // Generate new token
+    // Generate new token with updated information
     const newToken = jwt.sign(
       { 
         userId: user._id, 
-        username: user.username 
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName
       }, 
       process.env.JWT_SECRET, 
       { expiresIn: '1h' }
     );
 
     res.json({ 
-      message: 'On Board date set successfully', 
-      user: userResponse,
+      message: 'On board date updated successfully', 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        offshoreRole: user.offshoreRole,
+        company: user.company || null,
+        workSchedule: {
+          nextOnBoardDate: user.workSchedule.nextOnBoardDate,
+          nextOffBoardDate: user.workSchedule.nextOffBoardDate
+        },
+        workingRegime: user.workingRegime,
+        unitName: user.unitName || null,
+        country: user.country || null
+      },
       token: newToken
     });
   } catch (error) {
-    console.error('Set On Board date error:', error);
-    
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-
-    res.status(500).json({ 
-      message: 'Server error during On Board date setting',
-      error: error.message 
-    });
+    console.error('Set on board date error:', error);
+    res.status(500).json({ message: 'Server error during on board date update', error: error.message });
   }
 });
 
