@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const validateGoogleToken = require('../middleware/googleTokenValidator');
 
 // Register new user
 router.post('/register', async (req, res) => {
@@ -15,28 +16,30 @@ router.post('/register', async (req, res) => {
       workingRegime,
       company, 
       unitName, 
-      country 
+      country,
+      googleLogin // New flag
     } = req.body;
 
     // Check if user already exists
     let existingUser = await User.findOne({ $or: [{ username }, { email }] });
 
     if (existingUser) {
-      return res.status(400).json({ message: 'User already exists with this username or email' });
-    }
-
-    // Validate working regime
-    if (!workingRegime || 
-        typeof workingRegime.onDutyDays !== 'number' || 
-        typeof workingRegime.offDutyDays !== 'number') {
-      return res.status(400).json({ message: 'Invalid working regime format' });
+      // If Google login, update existing user
+      if (googleLogin && !existingUser.isGoogleUser) {
+        existingUser.isGoogleUser = true;
+        await existingUser.save();
+      } else if (existingUser.isGoogleUser) {
+        return res.status(400).json({ message: 'Google user already exists' });
+      } else {
+        return res.status(400).json({ message: 'User already exists with this username or email' });
+      }
     }
 
     // Create new user
     const newUser = new User({
       username,
       email,
-      password,
+      password: googleLogin ? undefined : password, // Optional for Google users
       fullName,
       offshoreRole,
       workingRegime: {
@@ -45,7 +48,8 @@ router.post('/register', async (req, res) => {
       },
       company,
       unitName,
-      country
+      country,
+      isGoogleUser: googleLogin || false
     });
 
     // Save user to database
@@ -55,7 +59,8 @@ router.post('/register', async (req, res) => {
     const token = jwt.sign(
       { 
         userId: newUser._id, 
-        username: newUser.username 
+        username: newUser.username,
+        isGoogleUser: newUser.isGoogleUser
       }, 
       process.env.JWT_SECRET, 
       { expiresIn: '1h' }
@@ -69,6 +74,7 @@ router.post('/register', async (req, res) => {
       fullName: newUser.fullName,
       offshoreRole: newUser.offshoreRole,
       workingRegime: newUser.workingRegime,
+      isGoogleUser: newUser.isGoogleUser,
       company: newUser.company,
       unitName: newUser.unitName,
       country: newUser.country
@@ -83,6 +89,73 @@ router.post('/register', async (req, res) => {
     console.error('Registration error:', error);
     res.status(500).json({ 
       message: 'Server error during registration',
+      error: error.message 
+    });
+  }
+});
+
+// Google Login/Registration
+router.post('/google-login', validateGoogleToken, async (req, res) => {
+  try {
+    // Use validated Google user info from middleware
+    const { email, name, picture, googleId, country } = req.googleUser;
+
+    // Check if user already exists
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Create new user with Google credentials
+      user = new User({
+        email,
+        fullName: name,
+        username: email.split('@')[0],
+        isGoogleUser: true,
+        googleId,
+        profilePicture: picture,
+        // Default values for required fields
+        offshoreRole: 'Support', // Default role
+        workingRegime: {
+          onDutyDays: 28,
+          offDutyDays: 28
+        },
+        country: country || 'Unknown' // Use detected country
+      });
+
+      await user.save();
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        userId: user._id, 
+        username: user.username,
+        isGoogleUser: true
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '1h' }
+    );
+
+    // Return user info and token (excluding password)
+    const userResponse = {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      fullName: user.fullName,
+      offshoreRole: user.offshoreRole,
+      workingRegime: user.workingRegime,
+      isGoogleUser: user.isGoogleUser,
+      profilePicture: user.profilePicture,
+      country: user.country
+    };
+
+    res.status(200).json({ 
+      user: userResponse, 
+      token 
+    });
+  } catch (error) {
+    console.error('Google Login error:', error);
+    res.status(500).json({ 
+      message: 'Server error during Google login',
       error: error.message 
     });
   }

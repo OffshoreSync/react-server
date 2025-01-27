@@ -33,8 +33,8 @@ const UserSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
-    minlength: 6
+    required: function() { return !this.isGoogleUser; },
+    minlength: function() { return this.isGoogleUser ? 0 : 6; }
   },
   fullName: {
     type: String,
@@ -99,6 +99,18 @@ const UserSchema = new mongoose.Schema({
       required: true
     }
   }],
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+  isGoogleUser: {
+    type: Boolean,
+    default: false
+  },
+  profilePicture: {
+    type: String
+  },
   createdAt: {
     type: Date,
     default: Date.now
