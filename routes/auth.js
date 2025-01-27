@@ -511,6 +511,16 @@ router.post('/generate-work-cycles', async (req, res) => {
       const onBoardEnd = new Date(currentDate);
       onBoardEnd.setDate(onBoardEnd.getDate() + onDutyDays);
 
+      // Ensure on-board start date is strictly after off-board end date (HAX)
+      if (cycleNumber > 1) {
+        const prevCycle = user.workCycles[user.workCycles.length - 1];
+        const prevCycleEnd = new Date(prevCycle.endDate);
+        
+        if (onBoardStart.getTime() === prevCycleEnd.getTime()) {
+          onBoardStart.setDate(onBoardStart.getDate() + 1);
+        }
+      }
+
       user.workCycles.push({
         startDate: onBoardStart,
         endDate: onBoardEnd,
@@ -523,6 +533,11 @@ router.post('/generate-work-cycles', async (req, res) => {
       const offBoardStart = new Date(currentDate);
       const offBoardEnd = new Date(currentDate);
       offBoardEnd.setDate(offBoardEnd.getDate() + offDutyDays);
+
+      // Ensure off-board start date is strictly after on-board end date (HAX)
+      if (offBoardStart.getTime() === onBoardEnd.getTime()) {
+        offBoardStart.setDate(offBoardStart.getDate() + 1);
+      }
 
       user.workCycles.push({
         startDate: offBoardStart,
