@@ -565,4 +565,124 @@ router.post('/generate-work-cycles', async (req, res) => {
   }
 });
 
+// Retrieve a specific user's work cycles
+router.get('/user-work-cycles/:userId', async (req, res) => {
+  try {
+    // Get token from headers for authentication
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token expired', 
+          error: 'TokenExpiredError',
+          requiresReAuthentication: true 
+        });
+      }
+      throw error;
+    }
+
+    const { userId } = req.params;
+
+    // Find target user
+    const targetUser = await User.findById(userId)
+      .select('workCycles fullName username');
+
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Sort work cycles chronologically
+    const sortedWorkCycles = targetUser.workCycles
+      .map(cycle => ({
+        ...cycle.toObject(),
+        startDate: new Date(cycle.startDate),
+        endDate: new Date(cycle.endDate)
+      }))
+      .sort((a, b) => a.startDate - b.startDate);
+
+    // Prepare response
+    res.status(200).json({
+      userId: targetUser._id,
+      fullName: targetUser.fullName,
+      username: targetUser.username,
+      workCycles: sortedWorkCycles
+    });
+
+  } catch (error) {
+    console.error('Error retrieving user work cycles:', error);
+    res.status(500).json({ 
+      message: 'Server error while retrieving user work cycles',
+      error: error.message 
+    });
+  }
+});
+
+// Fetch all users for sync functionality
+router.get('/all-users', async (req, res) => {
+  try {
+    // Get token from headers for authentication
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          message: 'Token expired', 
+          error: 'TokenExpiredError',
+          requiresReAuthentication: true 
+        });
+      }
+      throw error;
+    }
+
+    // Find the current user
+    const currentUser = await User.findById(decoded.userId);
+
+    if (!currentUser) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+
+    // Fetch all users except the current user
+    const users = await User.find({ 
+      _id: { $ne: currentUser._id } 
+    }).select('id fullName username email');
+
+    // Validate and filter users
+    const validUsers = users.map(user => ({
+      id: user._id,
+      fullName: user.fullName,
+      username: user.username,
+      email: user.email
+    }));
+
+    res.status(200).json({ 
+      users: validUsers,
+      total: validUsers.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching all users:', error);
+    res.status(500).json({ 
+      message: 'Server error while fetching users',
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;
