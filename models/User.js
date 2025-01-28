@@ -54,7 +54,8 @@ const UserSchema = new mongoose.Schema({
   },
   offshoreRole: {
     type: String,
-    enum: ['Drilling', 'Production', 'Maintenance', 'Support', 'Management', 'Operations'],
+    enum: ['Drilling', 'Production', 'Maintenance', 'Support', 'Management',
+      'Operations', 'Safety', 'Bridge'],
     required: true
   },
   workingRegime: {
