@@ -563,6 +563,53 @@ router.put('/set-onboard-date', async (req, res) => {
   }
 });
 
+// Reset Work Schedule and Prepare for New Onboarding
+router.put('/reset-next-onboard-date', async (req, res) => {
+  try {
+    // Get token from headers
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+
+    // Find the user
+    const user = await User.findById(decoded.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Reset work schedule details
+    user.workSchedule = {
+      nextOnBoardDate: null,
+      nextOffBoardDate: null
+    };
+
+    // Save the updated user
+    await user.save();
+
+    res.json({ 
+      message: 'Work schedule reset successfully',
+      workSchedule: user.workSchedule 
+    });
+  } catch (error) {
+    console.error('Error resetting work schedule:', error);
+    res.status(500).json({ 
+      message: 'Server error while resetting work schedule',
+      error: error.message 
+    });
+  }
+});
+
 // Generate and save work cycles for a user
 router.post('/generate-work-cycles', async (req, res) => {
   try {
