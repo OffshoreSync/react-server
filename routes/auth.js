@@ -143,9 +143,11 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       fullName: user.fullName,
       offshoreRole: user.offshoreRole,
       workingRegime: user.workingRegime,
-      isGoogleUser: user.isGoogleUser,
+      isGoogleUser: user.isGoogleUser || true, // Ensure this is always set for Google logins
       profilePicture: user.profilePicture,
-      country: user.country
+      country: user.country,
+      company: user.company || null,
+      unitName: user.unitName || null
     };
 
     res.status(200).json({ 
@@ -208,7 +210,7 @@ router.post('/login', async (req, res) => {
         // Explicitly include these fields with null fallback
         unitName: user.unitName || null,
         country: user.country || null,
-        
+        isGoogleUser: user.isGoogleUser,
         nextOnBoardDate: user.nextOnBoardDate || null
       }
     });
@@ -366,7 +368,7 @@ router.put('/update-profile', async (req, res) => {
         // Explicitly include these fields with null fallback
         unitName: user.unitName || null,
         country: user.country || null,
-        
+        isGoogleUser: user.isGoogleUser,
         nextOnBoardDate: user.nextOnBoardDate || null
       },
       token: newToken
@@ -429,7 +431,8 @@ router.get('/profile', async (req, res) => {
         company: user.company,
         workSchedule: user.workSchedule,
         unitName: user.unitName || null,
-        country: user.country || null
+        country: user.country || null,
+        isGoogleUser: user.isGoogleUser
       }
     });
   } catch (error) {
@@ -522,7 +525,8 @@ router.put('/set-onboard-date', async (req, res) => {
         },
         workingRegime: user.workingRegime,
         unitName: user.unitName || null,
-        country: user.country || null
+        country: user.country || null,
+        isGoogleUser: user.isGoogleUser
       },
       token: newToken
     });
@@ -635,7 +639,8 @@ router.post('/generate-work-cycles', async (req, res) => {
       fullName: user.fullName,
       workSchedule: user.workSchedule,
       workingRegime: user.workingRegime,
-      workCycles: user.workCycles
+      workCycles: user.workCycles,
+      isGoogleUser: user.isGoogleUser
     };
 
     res.status(200).json({ 
@@ -682,7 +687,7 @@ router.get('/user-work-cycles/:userId', async (req, res) => {
 
     // Find target user
     const targetUser = await User.findById(userId)
-      .select('workCycles fullName username');
+      .select('workCycles fullName username isGoogleUser');
 
     if (!targetUser) {
       return res.status(404).json({ message: 'User not found' });
@@ -702,6 +707,7 @@ router.get('/user-work-cycles/:userId', async (req, res) => {
       userId: targetUser._id,
       fullName: targetUser.fullName,
       username: targetUser.username,
+      isGoogleUser: targetUser.isGoogleUser,
       workCycles: sortedWorkCycles
     });
 
@@ -749,14 +755,15 @@ router.get('/all-users', async (req, res) => {
     // Fetch all users except the current user
     const users = await User.find({ 
       _id: { $ne: currentUser._id } 
-    }).select('id fullName username email');
+    }).select('id fullName username email isGoogleUser');
 
     // Validate and filter users
     const validUsers = users.map(user => ({
       id: user._id,
       fullName: user.fullName,
       username: user.username,
-      email: user.email
+      email: user.email,
+      isGoogleUser: user.isGoogleUser
     }));
 
     res.status(200).json({ 
