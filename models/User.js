@@ -34,7 +34,18 @@ const UserSchema = new mongoose.Schema({
   password: {
     type: String,
     required: function() { return !this.isGoogleUser; },
-    minlength: function() { return this.isGoogleUser ? 0 : 6; }
+    minlength: 6,
+    validate: {
+      validator: function(v) {
+        // Only validate password complexity for non-Google users
+        if (this.isGoogleUser) return true;
+        
+        // Optional: Add a more flexible password validation
+        // This allows passwords of at least 6 characters
+        return v.length >= 6;
+      },
+      message: 'Password must be at least 6 characters long'
+    }
   },
   fullName: {
     type: String,
@@ -43,7 +54,7 @@ const UserSchema = new mongoose.Schema({
   },
   offshoreRole: {
     type: String,
-    enum: ['Drilling', 'Production', 'Maintenance', 'Support', 'Management'],
+    enum: ['Drilling', 'Production', 'Maintenance', 'Support', 'Management', 'Operations'],
     required: true
   },
   workingRegime: {

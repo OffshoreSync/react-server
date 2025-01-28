@@ -7,6 +7,8 @@ const validateGoogleToken = require('../middleware/googleTokenValidator');
 // Register new user
 router.post('/register', async (req, res) => {
   try {
+    console.log('Received registration data:', JSON.stringify(req.body, null, 2));
+
     const { 
       username, 
       email, 
@@ -19,6 +21,22 @@ router.post('/register', async (req, res) => {
       country,
       googleLogin // New flag
     } = req.body;
+
+    // Validate required fields
+    if (!username || !email || !fullName || !offshoreRole || !workingRegime || !country) {
+      console.error('Missing required fields');
+      return res.status(400).json({ 
+        message: 'Missing required fields', 
+        missingFields: {
+          username: !username,
+          email: !email,
+          fullName: !fullName,
+          offshoreRole: !offshoreRole,
+          workingRegime: !workingRegime,
+          country: !country
+        }
+      });
+    }
 
     // Check if user already exists
     let existingUser = await User.findOne({ $or: [{ username }, { email }] });
@@ -46,14 +64,23 @@ router.post('/register', async (req, res) => {
         onDutyDays: workingRegime.onDutyDays,
         offDutyDays: workingRegime.offDutyDays
       },
-      company,
-      unitName,
+      company: company || null,
+      unitName: unitName || null,
       country,
       isGoogleUser: googleLogin || false
     });
 
     // Save user to database
-    await newUser.save();
+    try {
+      await newUser.save();
+    } catch (saveError) {
+      console.error('User save error:', saveError);
+      return res.status(400).json({ 
+        message: 'Error saving user', 
+        details: saveError.message,
+        errors: saveError.errors 
+      });
+    }
 
     // Generate JWT token
     const token = jwt.sign(
