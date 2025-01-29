@@ -4,14 +4,29 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000', 
+  origin: function(origin, callback) {
+    // Allow requests from your frontend domains
+    const allowedOrigins = [
+      process.env.REACT_APP_FRONTEND_URL,  // Your Render frontend URL
+      'https://your-app-name.onrender.com', // Render's default URL
+      'http://localhost:3000',   // Local development
+      undefined                  // Allow undefined origin for local development
+    ].filter(Boolean); // Remove any falsy values
+    
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
+
 app.use(express.json());
 
 // MongoDB Connection
@@ -34,7 +49,7 @@ app.get('/', (req, res) => {
   res.send('Welcome to the Offshore Sync Application');
 });
 
-// Start server
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server is running on port: ${PORT}`);
 });
