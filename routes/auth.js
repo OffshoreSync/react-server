@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const validateGoogleToken = require('../middleware/googleTokenValidator');
+const bcrypt = require('bcryptjs');
 
 // Register new user
 router.post('/register', async (req, res) => {
@@ -67,8 +68,15 @@ router.post('/register', async (req, res) => {
       company: company || null,
       unitName: unitName || null,
       country,
-      isGoogleUser: googleLogin || false
+      isGoogleUser: googleLogin || false,
+      profilePicture: googleLogin ? undefined : null // Set profilePicture to null for non-Google users
     });
+
+    // Hash password
+    if (!googleLogin) {
+      const salt = await bcrypt.genSalt(10);
+      newUser.password = await bcrypt.hash(password, salt);
+    }
 
     // Save user to database
     try {
@@ -104,7 +112,8 @@ router.post('/register', async (req, res) => {
       isGoogleUser: newUser.isGoogleUser,
       company: newUser.company,
       unitName: newUser.unitName,
-      country: newUser.country
+      country: newUser.country,
+      profilePicture: newUser.isGoogleUser ? undefined : null // Explicitly set to null for non-Google users
     };
 
     res.status(201).json({ 
@@ -124,13 +133,11 @@ router.post('/register', async (req, res) => {
 // Google Login/Registration
 router.post('/google-login', validateGoogleToken, async (req, res) => {
   try {
-    // Log incoming request details
-    console.log('Google Login Request Headers:', JSON.stringify(req.headers, null, 2));
-    console.log('Google Login Request Body:', JSON.stringify(req.body, null, 2));
-    console.log('Validated Google User:', JSON.stringify(req.googleUser, null, 2));
-
     // Use validated Google user info from middleware
     const { email, name, picture, googleId, country } = req.googleUser;
+
+    // Log incoming picture URL
+    console.log('Incoming Google Profile Picture URL:', picture);
 
     // Check if user already exists
     let user = await User.findOne({ email });
@@ -143,7 +150,7 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
         username: email.split('@')[0],
         isGoogleUser: true,
         googleId,
-        profilePicture: picture,
+        profilePicture: picture, // Explicitly set profile picture
         // Default values for required fields
         offshoreRole: 'Support', // Default role
         workingRegime: {
@@ -154,6 +161,12 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       });
 
       await user.save();
+      console.log('New user created with profile picture:', user.profilePicture);
+    } else {
+      // Update existing user's profile picture
+      user.profilePicture = picture;
+      await user.save();
+      console.log('Existing user updated with profile picture:', user.profilePicture);
     }
 
     // Generate JWT token
@@ -176,11 +189,14 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       offshoreRole: user.offshoreRole,
       workingRegime: user.workingRegime,
       isGoogleUser: user.isGoogleUser || true, // Ensure this is always set for Google logins
-      profilePicture: user.profilePicture,
+      profilePicture: user.profilePicture, // Explicitly return profile picture
       country: user.country,
       company: user.company || null,
       unitName: user.unitName || null
     };
+
+    // Additional logging
+    console.log('User Response Profile Picture:', userResponse.profilePicture);
 
     res.status(200).json({ 
       user: userResponse, 
@@ -214,6 +230,12 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid username or password' });
     }
 
+    // Ensure profilePicture is null for non-Google users
+    if (!user.isGoogleUser) {
+      user.profilePicture = null;
+      await user.save();
+    }
+
     // Generate token
     const token = jwt.sign(
       { 
@@ -243,6 +265,7 @@ router.post('/login', async (req, res) => {
         unitName: user.unitName || null,
         country: user.country || null,
         isGoogleUser: user.isGoogleUser,
+        profilePicture: user.isGoogleUser ? user.profilePicture : null, // Explicitly set to null for non-Google users
         nextOnBoardDate: user.nextOnBoardDate || null
       }
     });
@@ -448,6 +471,12 @@ router.get('/profile', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    // Log user details for debugging
+    console.log('User Profile Details:', {
+      isGoogleUser: user.isGoogleUser,
+      profilePicture: user.profilePicture
+    });
+
     // Return user profile (excluding sensitive information)
     res.json({ 
       user: {
@@ -464,7 +493,8 @@ router.get('/profile', async (req, res) => {
         workSchedule: user.workSchedule,
         unitName: user.unitName || null,
         country: user.country || null,
-        isGoogleUser: user.isGoogleUser
+        isGoogleUser: user.isGoogleUser,
+        profilePicture: user.profilePicture || null // Explicitly include profilePicture
       }
     });
   } catch (error) {

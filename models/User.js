@@ -148,9 +148,9 @@ UserSchema.pre('save', async function(next) {
   next();
 });
 
-// Method to check password
+// Method to compare password
 UserSchema.methods.comparePassword = async function(candidatePassword) {
-  return bcrypt.compare(candidatePassword, this.password);
+  return await bcrypt.compare(candidatePassword, this.password);
 };
 
 module.exports = mongoose.model('User', UserSchema);
