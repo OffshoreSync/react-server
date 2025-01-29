@@ -29,9 +29,9 @@ connection.once('open', () => {
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
 
-// Basic route
+// Root route
 app.get('/', (req, res) => {
-  res.send('Welcome to the Offshore Worker Calendar Application');
+  res.send('Welcome to the Offshore Sync Application');
 });
 
 // Start server
