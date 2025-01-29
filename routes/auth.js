@@ -124,6 +124,11 @@ router.post('/register', async (req, res) => {
 // Google Login/Registration
 router.post('/google-login', validateGoogleToken, async (req, res) => {
   try {
+    // Log incoming request details
+    console.log('Google Login Request Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('Google Login Request Body:', JSON.stringify(req.body, null, 2));
+    console.log('Validated Google User:', JSON.stringify(req.googleUser, null, 2));
+
     // Use validated Google user info from middleware
     const { email, name, picture, googleId, country } = req.googleUser;
 
@@ -182,9 +187,9 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       token 
     });
   } catch (error) {
-    console.error('Google Login error:', error);
+    console.error('Google Login Error:', JSON.stringify(error, null, 2));
     res.status(500).json({ 
-      message: 'Server error during Google login',
+      message: 'Internal server error during Google login',
       error: error.message 
     });
   }
