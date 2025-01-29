@@ -1,7 +1,7 @@
 const { OAuth2Client } = require('google-auth-library');
 const geoip = require('geoip-lite');
 
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const client = new OAuth2Client(process.env.REACT_APP_GOOGLE_CLIENT_ID);
 
 const validateGoogleToken = async (req, res, next) => {
   const { googleToken } = req.body;
@@ -13,7 +13,7 @@ const validateGoogleToken = async (req, res, next) => {
   try {
     const ticket = await client.verifyIdToken({
       idToken: googleToken,
-      audience: process.env.GOOGLE_CLIENT_ID
+      audience: process.env.REACT_APP_GOOGLE_CLIENT_ID
     });
 
     const payload = ticket.getPayload();
