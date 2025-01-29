@@ -4,6 +4,8 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const validateGoogleToken = require('../middleware/googleTokenValidator');
 const bcrypt = require('bcryptjs');
+const path = require('path');
+const { getCountryCode } = require('../utils/countries');
 
 // Register new user
 router.post('/register', async (req, res) => {
@@ -130,14 +132,30 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// Country mapping function
+const mapCountryToCode = (countryName) => {
+  // Use the getCountryCode function from server utils
+  return getCountryCode(countryName);
+};
+
 // Google Login/Registration
 router.post('/google-login', validateGoogleToken, async (req, res) => {
   try {
     // Use validated Google user info from middleware
     const { email, name, picture, googleId, country } = req.googleUser;
 
-    // Log incoming picture URL
-    console.log('Incoming Google Profile Picture URL:', picture);
+    // Map country name to country code
+    const countryCode = mapCountryToCode(country);
+
+    // Log incoming profile details
+    console.log('Incoming Google Profile:', {
+      email,
+      name,
+      picture,
+      googleId,
+      country,
+      mappedCountryCode: countryCode
+    });
 
     // Check if user already exists
     let user = await User.findOne({ email });
@@ -151,22 +169,35 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
         isGoogleUser: true,
         googleId,
         profilePicture: picture, // Explicitly set profile picture
+        // Use mapped country code
+        country: countryCode,
         // Default values for required fields
         offshoreRole: 'Support', // Default role
         workingRegime: {
           onDutyDays: 28,
           offDutyDays: 28
-        },
-        country: country || 'Unknown' // Use detected country
+        }
       });
 
       await user.save();
-      console.log('New user created with profile picture:', user.profilePicture);
+      console.log('New user created with details:', {
+        profilePicture: user.profilePicture,
+        country: user.country
+      });
     } else {
-      // Update existing user's profile picture
+      // Update existing user's profile picture and country
       user.profilePicture = picture;
+      
+      // Only update country if it's not already set
+      if (!user.country || user.country === 'Unknown') {
+        user.country = countryCode;
+      }
+
       await user.save();
-      console.log('Existing user updated with profile picture:', user.profilePicture);
+      console.log('Existing user updated with details:', {
+        profilePicture: user.profilePicture,
+        country: user.country
+      });
     }
 
     // Generate JWT token
@@ -190,13 +221,16 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       workingRegime: user.workingRegime,
       isGoogleUser: user.isGoogleUser || true, // Ensure this is always set for Google logins
       profilePicture: user.profilePicture, // Explicitly return profile picture
-      country: user.country,
+      country: user.country || 'US', // Ensure country is always returned
       company: user.company || null,
       unitName: user.unitName || null
     };
 
     // Additional logging
-    console.log('User Response Profile Picture:', userResponse.profilePicture);
+    console.log('User Response:', {
+      profilePicture: userResponse.profilePicture,
+      country: userResponse.country
+    });
 
     res.status(200).json({ 
       user: userResponse, 
