@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');  // Add path module
 require('dotenv').config();
 
 const app = express();
@@ -28,6 +29,15 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Serve static files from React app
+const buildPath = path.join(__dirname, '../client/build');
+app.use(express.static(buildPath));
+
+// Catch-all route to serve index.html for client-side routing
+app.get('*', (req, res) => {
+  res.sendFile(path.join(buildPath, 'index.html'));
+});
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app', {
