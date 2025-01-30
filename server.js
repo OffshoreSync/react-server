@@ -31,7 +31,7 @@ app.use(cors({
 app.use(express.json());
 
 // Serve static files from React app
-const buildPath = path.join(__dirname, '../client/build');
+const buildPath = process.env.REACT_BUILD_PATH || path.join('/opt/render/project/client/build');
 app.use(express.static(buildPath));
 
 // Catch-all route to serve index.html for client-side routing
