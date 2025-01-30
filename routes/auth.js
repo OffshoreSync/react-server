@@ -714,10 +714,8 @@ router.post('/generate-work-cycles', async (req, res) => {
     // Get working regime from user
     const { onDutyDays, offDutyDays } = user.workingRegime;
 
-    // Clear existing work cycles
-    user.workCycles = [];
-
-    // Generate work cycles for the next 2 years
+    // Prepare work cycles
+    const workCycles = [];
     const nextOnBoardDate = new Date(user.workSchedule.nextOnBoardDate);
     const twoYearsFromNow = new Date(nextOnBoardDate);
     twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
@@ -732,8 +730,8 @@ router.post('/generate-work-cycles', async (req, res) => {
       onBoardEnd.setDate(onBoardEnd.getDate() + onDutyDays);
 
       // Ensure on-board start date is strictly after off-board end date (HAX)
-      if (cycleNumber > 1) {
-        const prevCycle = user.workCycles[user.workCycles.length - 1];
+      if (cycleNumber > 1 && workCycles.length > 0) {
+        const prevCycle = workCycles[workCycles.length - 1];
         const prevCycleEnd = new Date(prevCycle.endDate);
         
         if (onBoardStart.getTime() === prevCycleEnd.getTime()) {
@@ -741,7 +739,7 @@ router.post('/generate-work-cycles', async (req, res) => {
         }
       }
 
-      user.workCycles.push({
+      workCycles.push({
         startDate: onBoardStart,
         endDate: onBoardEnd,
         type: 'OnBoard',
@@ -759,7 +757,7 @@ router.post('/generate-work-cycles', async (req, res) => {
         offBoardStart.setDate(offBoardStart.getDate() + 1);
       }
 
-      user.workCycles.push({
+      workCycles.push({
         startDate: offBoardStart,
         endDate: offBoardEnd,
         type: 'OffBoard',
@@ -771,27 +769,50 @@ router.post('/generate-work-cycles', async (req, res) => {
       cycleNumber++;
     }
 
-    // Save the user with new work cycles
-    await user.save();
+    // Use findOneAndUpdate to atomically update work cycles
+    try {
+      const updatedUser = await User.findOneAndUpdate(
+        { _id: user._id },
+        { 
+          $set: { 
+            workCycles: workCycles 
+          } 
+        },
+        { 
+          new: true,  // Return the modified document
+          runValidators: true  // Run model validations
+        }
+      );
 
-    // Prepare response with full user data
-    const userResponse = {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
-      workSchedule: user.workSchedule,
-      workingRegime: user.workingRegime,
-      workCycles: user.workCycles,
-      isGoogleUser: user.isGoogleUser
-    };
+      if (!updatedUser) {
+        throw new Error('User not found or could not update work cycles');
+      }
 
-    res.status(200).json({ 
-      message: 'Work cycles generated successfully',
-      user: userResponse,
-      workCycles: user.workCycles
-    });
+      // Prepare response with full user data
+      const userResponse = {
+        _id: updatedUser._id,
+        username: updatedUser.username,
+        email: updatedUser.email,
+        fullName: updatedUser.fullName,
+        workSchedule: updatedUser.workSchedule,
+        workingRegime: updatedUser.workingRegime,
+        workCycles: updatedUser.workCycles,
+        isGoogleUser: updatedUser.isGoogleUser
+      };
 
+      res.status(200).json({ 
+        message: 'Work cycles generated successfully',
+        user: userResponse,
+        workCycles: updatedUser.workCycles
+      });
+
+    } catch (error) {
+      console.error('Error generating work cycles:', error);
+      res.status(500).json({ 
+        message: 'Server error while generating work cycles',
+        error: error.message 
+      });
+    }
   } catch (error) {
     console.error('Error generating work cycles:', error);
     res.status(500).json({ 
