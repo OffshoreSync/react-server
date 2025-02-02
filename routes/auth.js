@@ -944,4 +944,236 @@ router.get('/all-users', async (req, res) => {
   }
 });
 
+// Import Friend model
+const Friend = require('../models/Friend');
+
+// Send Friend Request
+router.post('/friend-request', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+
+    const { friendEmail } = req.body;
+
+    // Find the target user
+    const targetUser = await User.findOne({ email: friendEmail });
+
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Prevent self-friending
+    if (targetUser._id.toString() === currentUserId) {
+      return res.status(400).json({ message: 'Cannot send friend request to yourself' });
+    }
+
+    // Check for existing friend request or friendship
+    const existingRequest = await Friend.findOne({
+      $or: [
+        { user: currentUserId, friend: targetUser._id },
+        { user: targetUser._id, friend: currentUserId }
+      ]
+    });
+
+    if (existingRequest) {
+      return res.status(400).json({ 
+        message: 'Friend request already exists', 
+        status: existingRequest.status 
+      });
+    }
+
+    // Create friend request
+    const friendRequest = new Friend({
+      user: currentUserId,
+      friend: targetUser._id,
+      status: 'PENDING'
+    });
+
+    await friendRequest.save();
+
+    res.status(201).json({ 
+      message: 'Friend request sent', 
+      requestId: friendRequest._id 
+    });
+
+  } catch (error) {
+    console.error('Friend request error:', error);
+    res.status(500).json({ message: 'Server error during friend request' });
+  }
+});
+
+// Respond to Friend Request
+router.put('/friend-request/:requestId', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+
+    const { status } = req.body; // 'ACCEPTED' or 'BLOCKED'
+    const { requestId } = req.params;
+
+    const friendRequest = await Friend.findOneAndUpdate(
+      { 
+        _id: requestId, 
+        friend: currentUserId,
+        status: 'PENDING'
+      },
+      { 
+        status,
+        'sharingPreferences.allowScheduleSync': status === 'ACCEPTED'
+      },
+      { new: true }
+    );
+
+    if (!friendRequest) {
+      return res.status(404).json({ message: 'Friend request not found' });
+    }
+
+    res.status(200).json({ 
+      message: 'Friend request updated', 
+      status: friendRequest.status 
+    });
+
+  } catch (error) {
+    console.error('Friend request update error:', error);
+    res.status(500).json({ message: 'Server error updating friend request' });
+  }
+});
+
+// Get Friends List
+router.get('/friends', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+
+    // Find all accepted friendships for the current user
+    const friendships = await Friend.find({
+      $or: [
+        { user: currentUserId, status: 'ACCEPTED' },
+        { friend: currentUserId, status: 'ACCEPTED' }
+      ]
+    }).populate('user friend', 'fullName email profilePicture');
+
+    // Transform friendships to include friend details
+    const friends = friendships.map(friendship => {
+      const isFriendInitiator = friendship.user._id.toString() === currentUserId;
+      const friendDetails = isFriendInitiator ? friendship.friend : friendship.user;
+      
+      return {
+        id: friendDetails._id,
+        fullName: friendDetails.fullName,
+        email: friendDetails.email,
+        profilePicture: friendDetails.profilePicture,
+        sharingPreferences: {
+          allowScheduleSync: friendship.sharingPreferences.allowScheduleSync
+        }
+      };
+    });
+
+    res.status(200).json({ friends });
+
+  } catch (error) {
+    console.error('Get friends error:', error);
+    res.status(500).json({ message: 'Server error retrieving friends' });
+  }
+});
+
+// Get Pending Friend Requests
+router.get('/friend-requests', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+
+    // Find pending friend requests for the current user
+    const pendingRequests = await Friend.find({
+      friend: currentUserId,
+      status: 'PENDING'
+    }).populate('user', 'fullName email profilePicture');
+
+    const requests = pendingRequests.map(request => ({
+      id: request._id,
+      user: {
+        id: request.user._id,
+        fullName: request.user.fullName,
+        email: request.user.email,
+        profilePicture: request.user.profilePicture
+      },
+      requestedAt: request.requestedAt
+    }));
+
+    res.status(200).json({ pendingRequests: requests });
+
+  } catch (error) {
+    console.error('Get pending requests error:', error);
+    res.status(500).json({ message: 'Server error retrieving pending requests' });
+  }
+});
+
+// Search Users Route
+router.get('/search-users', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+
+    const { query } = req.query;
+
+    // Validate search query
+    if (!query || query.trim().length < 2) {
+      return res.status(400).json({ 
+        message: 'Search query must be at least 2 characters long' 
+      });
+    }
+
+    // Search users by full name or username, excluding current user
+    const users = await User.find({
+      $and: [
+        { _id: { $ne: currentUserId } }, // Exclude current user
+        {
+          $or: [
+            { fullName: { $regex: query, $options: 'i' } }, // Case-insensitive full name search
+            { username: { $regex: query, $options: 'i' } }  // Case-insensitive username search
+          ]
+        }
+      ]
+    }).select('fullName username email profilePicture offshoreRole'); // Select specific fields
+
+    // Check existing friend requests or friendships
+    const friendRequests = await Friend.find({
+      $or: [
+        { user: currentUserId },
+        { friend: currentUserId }
+      ]
+    });
+
+    // Annotate users with friendship status
+    const usersWithStatus = users.map(user => {
+      const existingRequest = friendRequests.find(
+        req => 
+          (req.user.toString() === user._id.toString() || 
+           req.friend.toString() === user._id.toString())
+      );
+
+      return {
+        id: user._id,
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        profilePicture: user.profilePicture,
+        offshoreRole: user.offshoreRole,
+        friendshipStatus: existingRequest ? existingRequest.status : 'NO_REQUEST'
+      };
+    });
+
+    res.status(200).json({ users: usersWithStatus });
+
+  } catch (error) {
+    console.error('Search users error:', error);
+    res.status(500).json({ message: 'Server error searching users' });
+  }
+});
+
 module.exports = router;
