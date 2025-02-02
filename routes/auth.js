@@ -954,52 +954,71 @@ router.post('/friend-request', async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const currentUserId = decoded.userId;
 
-    const { friendEmail } = req.body;
+    const { friendId } = req.body;
 
-    // Find the target user
-    const targetUser = await User.findOne({ email: friendEmail });
+    // Validate input
+    if (!friendId) {
+      return res.status(400).json({ message: 'Friend ID is required' });
+    }
 
+    // Check if the target user exists
+    const targetUser = await User.findById(friendId);
     if (!targetUser) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Prevent self-friending
-    if (targetUser._id.toString() === currentUserId) {
-      return res.status(400).json({ message: 'Cannot send friend request to yourself' });
+    // Check if users are trying to friend themselves
+    if (currentUserId.toString() === friendId) {
+      return res.status(400).json({ message: 'You cannot send a friend request to yourself' });
     }
 
-    // Check for existing friend request or friendship
+    // Check for existing friend requests or friendships
     const existingRequest = await Friend.findOne({
       $or: [
-        { user: currentUserId, friend: targetUser._id },
-        { user: targetUser._id, friend: currentUserId }
+        { 
+          user: currentUserId, 
+          friend: friendId 
+        },
+        { 
+          user: friendId, 
+          friend: currentUserId 
+        }
       ]
     });
 
     if (existingRequest) {
-      return res.status(400).json({ 
-        message: 'Friend request already exists', 
-        status: existingRequest.status 
-      });
+      if (existingRequest.status === 'ACCEPTED') {
+        return res.status(400).json({ message: 'You are already friends' });
+      }
+      if (existingRequest.status === 'PENDING') {
+        return res.status(400).json({ message: 'Friend request already sent or pending' });
+      }
     }
 
-    // Create friend request
-    const friendRequest = new Friend({
+    // Create new friend request
+    const newFriendRequest = new Friend({
       user: currentUserId,
-      friend: targetUser._id,
-      status: 'PENDING'
+      friend: friendId,
+      status: 'PENDING',
+      createdAt: new Date()
     });
 
-    await friendRequest.save();
+    await newFriendRequest.save();
+
+    // Populate the friend request with user details for notification purposes
+    await newFriendRequest.populate('user friend', 'fullName email profilePicture');
+
+    // Optional: Send notification to the target user
+    // You can implement this later with a notification system
 
     res.status(201).json({ 
-      message: 'Friend request sent', 
-      requestId: friendRequest._id 
+      message: 'Friend request sent successfully', 
+      friendRequest: newFriendRequest 
     });
 
   } catch (error) {
-    console.error('Friend request error:', error);
-    res.status(500).json({ message: 'Server error during friend request' });
+    console.error('Send friend request error:', error);
+    res.status(500).json({ message: 'Server error sending friend request' });
   }
 });
 
