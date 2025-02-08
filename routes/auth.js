@@ -7,6 +7,30 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const { getCountryCode } = require('../utils/countries');
 
+// Utility function for password complexity
+const validatePasswordComplexity = (password) => {
+  // Require:
+  // - Minimum 8 characters
+  // - At least one uppercase letter
+  // - At least one lowercase letter
+  // - At least one number
+  // - At least one special character
+  const complexityRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  return complexityRegex.test(password);
+};
+
+// Utility function for email validation
+const validateEmail = (email) => {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+};
+
+// Sanitize username
+const sanitizeUsername = (username) => {
+  // Remove any non-alphanumeric characters except underscore
+  return username.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+};
+
 // Register new user
 router.post('/register', async (req, res) => {
   try {
@@ -25,13 +49,38 @@ router.post('/register', async (req, res) => {
       googleLogin // New flag
     } = req.body;
 
+    // Sanitize and validate inputs
+    const sanitizedUsername = sanitizeUsername(username);
+    
+    // Email validation
+    if (!validateEmail(email)) {
+      return res.status(400).json({ 
+        message: 'Invalid email format',
+        field: 'email'
+      });
+    }
+
+    // Password complexity check for non-Google users
+    if (!googleLogin && !validatePasswordComplexity(password)) {
+      return res.status(400).json({ 
+        message: 'Password does not meet complexity requirements',
+        requirements: [
+          'Minimum 8 characters',
+          'At least one uppercase letter',
+          'At least one lowercase letter', 
+          'At least one number',
+          'At least one special character'
+        ]
+      });
+    }
+
     // Validate required fields
-    if (!username || !email || !fullName || !offshoreRole || !workingRegime || !country) {
+    if (!sanitizedUsername || !email || !fullName || !offshoreRole || !workingRegime || !country) {
       console.error('Missing required fields');
       return res.status(400).json({ 
         message: 'Missing required fields', 
         missingFields: {
-          username: !username,
+          username: !sanitizedUsername,
           email: !email,
           fullName: !fullName,
           offshoreRole: !offshoreRole,
@@ -42,7 +91,7 @@ router.post('/register', async (req, res) => {
     }
 
     // Check if user already exists
-    let existingUser = await User.findOne({ $or: [{ username }, { email }] });
+    let existingUser = await User.findOne({ $or: [{ username: sanitizedUsername }, { email }] });
 
     if (existingUser) {
       // If Google login, update existing user
@@ -58,7 +107,7 @@ router.post('/register', async (req, res) => {
 
     // Create new user
     const newUser = new User({
-      username,
+      username: sanitizedUsername,
       email,
       password: googleLogin ? undefined : password, // Optional for Google users
       fullName,

@@ -113,6 +113,23 @@ const sendPasswordResetEmail = async (email, resetLink) => {
   }
 };
 
+// Rate limiting for password reset requests
+const resetAttempts = {};
+const MAX_RESET_ATTEMPTS = 3;
+const RESET_LOCKOUT_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+
+// Password complexity validation
+const validatePasswordComplexity = (password) => {
+  // Require:
+  // - Minimum 8 characters
+  // - At least one uppercase letter
+  // - At least one lowercase letter
+  // - At least one number
+  // - At least one special character
+  const complexityRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  return complexityRegex.test(password);
+};
+
 // Request password reset route
 router.post('/request-reset', async (req, res) => {
   try {
@@ -182,26 +199,85 @@ router.post('/verify-token', async (req, res) => {
   }
 });
 
-// Reset password
+// Reset password route with enhanced security
 router.post('/reset', async (req, res) => {
   try {
-    const { token, newPassword } = req.body;
-    const hashedToken = PasswordReset.hashToken(token);
+    const { token, newPassword, email } = req.body;
+    const currentTime = Date.now();
 
-    // Find valid reset request
+    // Validate input
+    if (!token || !newPassword || !email) {
+      return res.status(400).json({ message: 'Token, email, and new password are required' });
+    }
+
+    // Rate limiting for reset attempts
+    const resetKey = `${email}_${token}`;
+    if (resetAttempts[resetKey]) {
+      const { attempts, lastAttempt, lockedUntil } = resetAttempts[resetKey];
+      
+      // Check if request is locked out
+      if (lockedUntil && currentTime < lockedUntil) {
+        const remainingLockTime = Math.ceil((lockedUntil - currentTime) / 1000 / 60);
+        return res.status(429).json({ 
+          message: `Too many reset attempts. Locked for ${remainingLockTime} minutes.`
+        });
+      }
+
+      // Check reset attempt frequency
+      if (attempts >= MAX_RESET_ATTEMPTS) {
+        resetAttempts[resetKey] = {
+          attempts: attempts + 1,
+          lastAttempt: currentTime,
+          lockedUntil: currentTime + RESET_LOCKOUT_DURATION
+        };
+        return res.status(429).json({ 
+          message: 'Too many reset attempts. Please try again later.'
+        });
+      }
+    }
+
+    // Validate password complexity
+    if (!validatePasswordComplexity(newPassword)) {
+      return res.status(400).json({ 
+        message: 'Password must be at least 8 characters long',
+        requirements: [
+          'Minimum 8 characters',
+          'At least one uppercase letter',
+          'At least one lowercase letter', 
+          'At least one number',
+          'At least one special character'
+        ]
+      });
+    }
+
+    // Prevent password reuse (simplified example)
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if new password is similar to previous passwords
+    const isPasswordReused = await bcrypt.compare(newPassword, user.password);
+    if (isPasswordReused) {
+      return res.status(400).json({ 
+        message: 'New password cannot be the same as the current password'
+      });
+    }
+
+    // Existing token verification logic
+    const hashedToken = PasswordReset.hashToken(token);
     const resetRequest = await PasswordReset.findOne({ 
       token: hashedToken, 
       expiresAt: { $gt: new Date() } 
     });
 
     if (!resetRequest) {
+      // Update reset attempts for invalid token
+      resetAttempts[resetKey] = {
+        attempts: (resetAttempts[resetKey]?.attempts || 0) + 1,
+        lastAttempt: currentTime
+      };
       return res.status(400).json({ message: 'Invalid or expired token' });
-    }
-
-    // Find user
-    const user = await User.findById(resetRequest.user);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
     }
 
     // Hash new password
@@ -215,12 +291,15 @@ router.post('/reset', async (req, res) => {
     // Delete all reset tokens for this user
     await PasswordReset.deleteMany({ user: user._id });
 
+    // Reset attempt tracking
+    delete resetAttempts[resetKey];
+
     res.status(200).json({ message: 'Password reset successful' });
   } catch (error) {
     console.error('Password reset error:', error);
     res.status(500).json({ 
-      message: error.message || 'Failed to reset password',
-      details: error.toString()
+      message: 'Failed to reset password',
+      details: error.message 
     });
   }
 });
