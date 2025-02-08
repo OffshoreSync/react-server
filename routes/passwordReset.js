@@ -159,7 +159,7 @@ router.post('/request-reset', async (req, res) => {
     });
 
     // Construct reset link
-    const resetLink = `${process.env.REACT_APP_FRONTEND_URL}/reset-password?token=${resetToken}`;
+    const resetLink = `${process.env.REACT_APP_FRONTEND_URL}/reset-password/${resetToken}`;
 
     // Send email using AWS SES
     await sendPasswordResetEmail(email, resetLink);
