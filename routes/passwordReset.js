@@ -202,12 +202,28 @@ router.post('/verify-token', async (req, res) => {
 // Reset password route with enhanced security
 router.post('/reset', async (req, res) => {
   try {
-    const { token, newPassword, email } = req.body;
+    const { token, newPassword, confirmPassword, email } = req.body;
     const currentTime = Date.now();
 
     // Validate input
-    if (!token || !newPassword || !email) {
-      return res.status(400).json({ message: 'Token, email, and new password are required' });
+    if (!token || !newPassword || !confirmPassword || !email) {
+      return res.status(400).json({ 
+        message: 'Token, email, new password, and confirmation are required',
+        fields: {
+          token: !token,
+          newPassword: !newPassword,
+          confirmPassword: !confirmPassword,
+          email: !email
+        }
+      });
+    }
+
+    // Check if passwords match
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ 
+        message: 'Passwords do not match',
+        field: 'confirmPassword'
+      });
     }
 
     // Rate limiting for reset attempts
@@ -239,7 +255,7 @@ router.post('/reset', async (req, res) => {
     // Validate password complexity
     if (!validatePasswordComplexity(newPassword)) {
       return res.status(400).json({ 
-        message: 'Password must be at least 8 characters long',
+        message: 'Password does not meet complexity requirements',
         requirements: [
           'Minimum 8 characters',
           'At least one uppercase letter',
@@ -250,21 +266,7 @@ router.post('/reset', async (req, res) => {
       });
     }
 
-    // Prevent password reuse (simplified example)
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Check if new password is similar to previous passwords
-    const isPasswordReused = await bcrypt.compare(newPassword, user.password);
-    if (isPasswordReused) {
-      return res.status(400).json({ 
-        message: 'New password cannot be the same as the current password'
-      });
-    }
-
-    // Existing token verification logic
+    // Verify reset token
     const hashedToken = PasswordReset.hashToken(token);
     const resetRequest = await PasswordReset.findOne({ 
       token: hashedToken, 
@@ -272,29 +274,32 @@ router.post('/reset', async (req, res) => {
     });
 
     if (!resetRequest) {
-      // Update reset attempts for invalid token
-      resetAttempts[resetKey] = {
-        attempts: (resetAttempts[resetKey]?.attempts || 0) + 1,
-        lastAttempt: currentTime
-      };
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
 
-    // Hash new password
+    // Find user by email
+    const user = await User.findById(resetRequest.user);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Hash the new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // Update user password
+    // Update user's password
     user.password = hashedPassword;
     await user.save();
 
-    // Delete all reset tokens for this user
-    await PasswordReset.deleteMany({ user: user._id });
+    // Delete the used reset token
+    await PasswordReset.deleteOne({ _id: resetRequest._id });
 
-    // Reset attempt tracking
-    delete resetAttempts[resetKey];
+    // Track successful reset
+    if (resetAttempts[resetKey]) {
+      delete resetAttempts[resetKey];
+    }
 
-    res.status(200).json({ message: 'Password reset successful' });
+    res.status(200).json({ message: 'Password reset successfully' });
   } catch (error) {
     console.error('Password reset error:', error);
     res.status(500).json({ 
