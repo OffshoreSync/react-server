@@ -76,8 +76,22 @@ router.post('/register', async (req, res) => {
 
     // Hash password
     if (!googleLogin) {
+      console.log('Hashing password for non-Google user');
+      console.log(`Password length: ${password.length}`);
+      
       const salt = await bcrypt.genSalt(10);
-      newUser.password = await bcrypt.hash(password, salt);
+      console.log(`Generated salt: ${salt}`);
+      
+      const hashedPassword = await bcrypt.hash(password, salt);
+      console.log(`Hashed password length: ${hashedPassword.length}`);
+      console.log(`Hashed password starts with: ${hashedPassword.substring(0, 20)}...`);
+      
+      newUser.password = hashedPassword;
+      
+      // Additional verification
+      console.log('Verifying password hash...');
+      const verifyMatch = await bcrypt.compare(password, hashedPassword);
+      console.log(`Password verification result: ${verifyMatch}`);
     }
 
     // Save user to database
@@ -250,22 +264,62 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
 
+    // Enhanced logging for diagnostics
+    console.log(`Login attempt for username: ${username}`);
+
     // Find user by username
     const user = await User.findOne({ username });
 
     if (!user) {
+      console.log(`Login failed: No user found with username ${username}`);
       return res.status(400).json({ message: 'Invalid username or password' });
     }
 
+    // Detailed user information logging for diagnostics
+    console.log(`User found: 
+      Username: ${user.username}
+      Is Google User: ${user.isGoogleUser}
+      Password Hash Length: ${user.password ? user.password.length : 'No password'}
+    `);
+
+    // Additional check for password existence
+    if (!user.password && !user.isGoogleUser) {
+      console.error(`Login error: Non-Google user ${username} has no password`);
+      return res.status(400).json({ message: 'Account setup incomplete' });
+    }
+
     // Check password
-    const isMatch = await user.comparePassword(password);
+    let isMatch = false;
+    try {
+      // Use the new integrity verification method
+      const integrityResult = await user.verifyPasswordIntegrity(password);
+      console.log('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
+      
+      // Determine match based on integrity check
+      isMatch = integrityResult.isMatch;
+      
+      // If no match, log additional details
+      if (!isMatch) {
+        console.warn(`Login failed for user ${username}. Detailed integrity check:`);
+        console.warn(`Stored Hash Length: ${integrityResult.storedHashLength}`);
+        console.warn(`New Hash Length: ${integrityResult.newHashLength}`);
+        console.warn(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
+        console.warn(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
+      }
+    } catch (compareError) {
+      console.error(`Password comparison error for user ${username}:`, compareError);
+      return res.status(500).json({ message: 'Internal server error during password verification' });
+    }
+
+    console.log(`Password match result for ${username}: ${isMatch}`);
 
     if (!isMatch) {
       return res.status(400).json({ message: 'Invalid username or password' });
     }
 
     // Ensure profilePicture is null for non-Google users
-    if (!user.isGoogleUser) {
+    if (!user.isGoogleUser && user.profilePicture !== null) {
+      console.log(`Resetting profile picture for non-Google user ${username}`);
       user.profilePicture = null;
       await user.save();
     }
@@ -276,7 +330,8 @@ router.post('/login', async (req, res) => {
         userId: user._id, 
         username: user.username,
         email: user.email,
-        fullName: user.fullName
+        fullName: user.fullName,
+        isGoogleUser: user.isGoogleUser // Explicitly include isGoogleUser flag
       }, 
       process.env.JWT_SECRET, 
       { expiresIn: '1h' }
@@ -299,13 +354,16 @@ router.post('/login', async (req, res) => {
         unitName: user.unitName || null,
         country: user.country || null,
         isGoogleUser: user.isGoogleUser,
-        profilePicture: user.isGoogleUser ? user.profilePicture : null, // Explicitly set to null for non-Google users
+        profilePicture: user.isGoogleUser ? user.profilePicture : null,
         nextOnBoardDate: user.nextOnBoardDate || null
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error during login' });
+    console.error('Login error for user:', req.body.username, error);
+    res.status(500).json({ 
+      message: 'Server error during login',
+      details: error.message 
+    });
   }
 });
 
