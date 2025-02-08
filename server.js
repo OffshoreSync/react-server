@@ -43,7 +43,10 @@ connection.once('open', () => {
 
 // Routes
 const authRoutes = require('./routes/auth');
+const passwordResetRoutes = require('./routes/passwordReset');
+
 app.use('/api/auth', authRoutes);
+app.use('/api/password', passwordResetRoutes);
 
 // Root route
 app.get('/', (req, res) => {
