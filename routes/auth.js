@@ -383,8 +383,14 @@ router.get('/verify-email', async (req, res) => {
   try {
     const { token } = req.query;
 
+    console.log('Received verification token:', token);
+
     if (!token) {
-      return res.status(400).json({ message: 'No verification token provided' });
+      console.warn('No verification token provided');
+      return res.status(400).json({ 
+        message: 'No verification token provided',
+        error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
+      });
     }
 
     // Find user with this token that hasn't expired
@@ -393,9 +399,28 @@ router.get('/verify-email', async (req, res) => {
       verificationTokenExpires: { $gt: new Date() }
     });
 
+    console.log('User found during verification:', user ? user.email : 'No user found');
+    console.log('Current time:', new Date());
+    console.log('Token expiration:', user ? user.verificationTokenExpires : 'N/A');
+
     if (!user) {
+      // Check if user exists but is already verified
+      const existingUser = await User.findOne({ 
+        verificationToken: token 
+      });
+
+      if (existingUser && existingUser.isVerified) {
+        console.log(`User ${existingUser.email} is already verified`);
+        return res.status(200).json({ 
+          message: req.t ? req.t('verifyEmail.success.message') : 'Email is already verified. You can now log in.',
+          alreadyVerified: true
+        });
+      }
+
+      console.warn('Invalid or expired verification token');
       return res.status(400).json({ 
-        message: 'Invalid or expired verification token' 
+        message: 'Invalid or expired verification token',
+        error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
       });
     }
 
@@ -406,13 +431,17 @@ router.get('/verify-email', async (req, res) => {
 
     await user.save();
 
+    console.log(`User ${user.email} verified successfully`);
+
     res.status(200).json({ 
-      message: 'Email verified successfully. You can now log in.' 
+      message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
+      verified: true
     });
   } catch (error) {
     console.error('Email verification error:', error);
     res.status(500).json({ 
-      message: 'Server error during email verification' 
+      message: 'Server error during email verification',
+      error: error.message
     });
   }
 });
