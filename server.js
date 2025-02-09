@@ -2,33 +2,123 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');  // Add path module
+const crypto = require('crypto');
+const cookieParser = require('cookie-parser');  // Add this import
 require('dotenv').config();
 
 const app = express();
 
+// CSRF Protection Middleware
+const generateCSRFToken = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
+const csrfProtection = (req, res, next) => {
+  // Skip CSRF for certain routes or methods
+  if (req.method === 'GET' || req.path.startsWith('/api/auth/check-session') || req.path === '/api/csrf-token') {
+    return next();
+  }
+
+  console.log('CSRF Protection Middleware');
+  console.log('Cookies:', req.cookies);
+  console.log('Headers:', req.headers);
+
+  // Generate CSRF token if not exists
+  if (!req.cookies['XSRF-TOKEN']) {
+    const csrfToken = generateCSRFToken();
+    res.cookie('XSRF-TOKEN', csrfToken, {
+      httpOnly: false, // Accessible by client-side JS
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production'
+    });
+    console.log('Generated new CSRF token:', csrfToken);
+  }
+
+  // Validate CSRF token for non-GET requests
+  const csrfCookie = req.cookies['XSRF-TOKEN'];
+  const csrfHeader = req.headers['x-xsrf-token'];
+
+  console.log('CSRF Cookie:', csrfCookie);
+  console.log('CSRF Header:', csrfHeader);
+
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    console.error('CSRF Token Validation Failed', {
+      hasCookie: !!csrfCookie,
+      hasHeader: !!csrfHeader,
+      tokensMatch: csrfCookie === csrfHeader
+    });
+
+    return res.status(403).json({ 
+      message: 'CSRF token validation failed',
+      error: 'INVALID_CSRF_TOKEN',
+      details: {
+        cookiePresent: !!csrfCookie,
+        headerPresent: !!csrfHeader,
+        tokensMatch: csrfCookie === csrfHeader
+      }
+    });
+  }
+
+  next();
+};
+
 // Middleware
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow requests from your frontend domains
-    const allowedOrigins = [
-      process.env.REACT_APP_FRONTEND_URL,  // Your Render frontend URL
-      'https://your-app-name.onrender.com', // Render's default URL
-      'http://localhost:3000',   // Local development
-      undefined                  // Allow undefined origin for local development
-    ].filter(Boolean); // Remove any falsy values
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
     
-    if (!origin || allowedOrigins.includes(origin)) {
+    const allowedOrigins = [
+      'http://localhost:3000', 
+      'https://yourdomain.com'
+    ];
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
   },
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With', 
+    'X-XSRF-TOKEN',  // Explicitly allow CSRF token header
+    'Accept'
+  ],
+  exposedHeaders: ['X-XSRF-TOKEN']  // Expose CSRF token header to client
 }));
 
+app.use(cookieParser());  // Add cookie-parser middleware
 app.use(express.json());
+
+// Handle preflight requests
+app.options('*', cors());  // Enable preflight requests for all routes
+
+app.use(csrfProtection);
+
+// CSRF token endpoint
+app.get('/api/csrf-token', (req, res) => {
+  // Ensure CSRF token is set
+  let csrfToken = req.cookies['XSRF-TOKEN'];
+  
+  if (!csrfToken) {
+    csrfToken = generateCSRFToken();
+    res.cookie('XSRF-TOKEN', csrfToken, {
+      httpOnly: false,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production'
+    });
+  }
+
+  console.log('CSRF Token Endpoint - Token:', csrfToken);
+
+  res.json({ 
+    csrfToken: csrfToken 
+  });
+});
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app', {
