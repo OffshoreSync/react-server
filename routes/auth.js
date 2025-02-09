@@ -31,8 +31,43 @@ const sanitizeUsername = (username) => {
   return username.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
 };
 
+// Disposable email domains list
+const DISPOSABLE_DOMAINS = [
+  'mailinator.com', 'guerrillamail.com', 'guerrillamail.net', 'guerrillamail.org',
+  'guerrillamail.biz', 'temp-mail.org', '10minutemail.com', 'throwawaymail.com', 
+  'tempmail.com', 'tempmail.net', 'tempemail.com', 'tempemails.com', 'tempemails.net',
+  'emailtemporaire.com', 'jetable.org', 'noemail.xyz', 'spam4.me', 'yopmail.com',
+  'dispostable.com', 'sharklasers.com', 'guerrillamail.info', 'grr.la', 'spam.la',
+  'pokemail.net', 'temp.email', 'dropmail.me', 'fakeinbox.com', '33mail.com'
+];
+
+// Middleware to block disposable emails
+const blockDisposableEmails = (req, res, next) => {
+  const { email } = req.body;
+  
+  if (!email) {
+    return res.status(400).json({ 
+      message: 'Email is required',
+      errors: { email: 'Email is required' }
+    });
+  }
+  
+  const emailDomain = email.split('@')[1].toLowerCase();
+  
+  if (DISPOSABLE_DOMAINS.includes(emailDomain)) {
+    return res.status(400).json({ 
+      message: 'Disposable email addresses are not allowed',
+      errors: { 
+        email: 'Please use a valid personal or corporate email address' 
+      }
+    });
+  }
+  
+  next();
+};
+
 // Register new user
-router.post('/register', async (req, res) => {
+router.post('/register', blockDisposableEmails, async (req, res) => {
   try {
     console.log('Received registration data:', JSON.stringify(req.body, null, 2));
 
