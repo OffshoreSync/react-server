@@ -123,10 +123,6 @@ const UserSchema = new mongoose.Schema({
   profilePicture: {
     type: String
   },
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
   verificationToken: {
     type: String,
     default: null
@@ -134,6 +130,14 @@ const UserSchema = new mongoose.Schema({
   verificationTokenExpires: {
     type: Date,
     default: null
+  },
+  verificationTokenUsedAt: {
+    type: Date,
+    default: null
+  },
+  isVerified: {
+    type: Boolean,
+    default: false
   },
   createdAt: {
     type: Date,

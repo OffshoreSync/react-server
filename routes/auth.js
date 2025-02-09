@@ -424,10 +424,9 @@ router.get('/verify-email', async (req, res) => {
       });
     }
 
-    // Mark user as verified
+    // Mark user as verified but keep the token for reference
     user.isVerified = true;
-    user.verificationToken = null;
-    user.verificationTokenExpires = null;
+    user.verificationTokenUsedAt = new Date(); // Add a timestamp of when token was used
 
     await user.save();
 
@@ -525,9 +524,7 @@ router.post('/login', async (req, res) => {
       { 
         userId: user._id, 
         username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        isGoogleUser: user.isGoogleUser // Explicitly include isGoogleUser flag
+        isGoogleUser: user.isGoogleUser
       }, 
       process.env.JWT_SECRET, 
       { expiresIn: '1h' }
@@ -543,6 +540,7 @@ router.post('/login', async (req, res) => {
         fullName: user.fullName,
         offshoreRole: user.offshoreRole,
         workingRegime: user.workingRegime,
+        isGoogleUser: user.isGoogleUser,
         company: user.company || null,
         workSchedule: user.workSchedule || {},
         
@@ -550,7 +548,7 @@ router.post('/login', async (req, res) => {
         unitName: user.unitName || null,
         country: user.country || null,
         isGoogleUser: user.isGoogleUser,
-        profilePicture: user.isGoogleUser ? user.profilePicture : null,
+        profilePicture: user.isGoogleUser ? undefined : null,
         nextOnBoardDate: user.nextOnBoardDate || null
       }
     });
