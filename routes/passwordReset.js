@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const PasswordReset = require('../models/PasswordReset');
+const PasswordResetAttempt = require('../models/PasswordResetAttempt'); // New import
 const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit'); // New import
+const { body, validationResult } = require('express-validator'); // New import
 
 // Validate AWS SES Configuration
 const validateSESConfig = () => {
@@ -114,65 +117,86 @@ const sendPasswordResetEmail = async (email, resetLink) => {
 };
 
 // Rate limiting for password reset requests
-const resetAttempts = {};
-const MAX_RESET_ATTEMPTS = 3;
-const RESET_LOCKOUT_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // Limit each IP to 3 password reset requests per windowMs
+  message: 'Too many password reset attempts, please try again later',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
 
-// Password complexity validation
-const validatePasswordComplexity = (password) => {
-  // Require:
-  // - Minimum 8 characters
-  // - At least one uppercase letter
-  // - At least one lowercase letter
-  // - At least one number
-  // - At least one special character
-  const complexityRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-  return complexityRegex.test(password);
-};
+// Middleware for password reset request validation
+const validatePasswordResetRequest = [
+  body('email').isEmail().withMessage('Invalid email format'),
+  body('email').normalizeEmail(),
+  // Optional: Add more validation like checking email domain, etc.
+];
 
 // Request password reset route
-router.post('/request-reset', async (req, res) => {
-  try {
+router.post('/request-reset', 
+  passwordResetLimiter,  // Add rate limiting
+  validatePasswordResetRequest,  // Add input validation
+  async (req, res) => {
+    // Validate request
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const { email } = req.body;
-    
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ message: 'Invalid email format' });
+
+    try {
+      // Additional bot protection: Check recent reset attempts
+      const recentAttempts = await PasswordResetAttempt.countDocuments({
+        email,
+        createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+      });
+
+      if (recentAttempts > 2) {
+        return res.status(429).json({ 
+          message: 'Too many reset attempts for this email. Please contact support.' 
+        });
+      }
+
+      // Existing user lookup and reset logic...
+      const user = await User.findOne({ email });
+      if (!user) {
+        return res.status(404).json({ message: 'No account found with this email' });
+      }
+
+      // Log the reset attempt
+      await PasswordResetAttempt.create({ 
+        email, 
+        ipAddress: req.ip 
+      });
+
+      // Generate reset token
+      const resetToken = PasswordReset.generateResetToken();
+      const hashedToken = PasswordReset.hashToken(resetToken);
+
+      // Create password reset record
+      await PasswordReset.create({
+        user: user._id,
+        token: hashedToken,
+        expiresAt: new Date(Date.now() + parseInt(process.env.PASSWORD_RESET_EXPIRY))
+      });
+
+      // Construct reset link
+      const resetLink = `${process.env.REACT_APP_FRONTEND_URL}/reset-password/${resetToken}`;
+
+      // Send email using AWS SES
+      await sendPasswordResetEmail(email, resetLink);
+
+      res.status(200).json({ message: 'Password reset link sent successfully' });
+    } catch (error) {
+      console.error('Password reset request error:', error);
+      res.status(500).json({ 
+        message: error.message || 'Failed to process password reset request',
+        details: error.toString()
+      });
     }
-    
-    // Find user by email
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Generate reset token
-    const resetToken = PasswordReset.generateResetToken();
-    const hashedToken = PasswordReset.hashToken(resetToken);
-
-    // Create password reset record
-    await PasswordReset.create({
-      user: user._id,
-      token: hashedToken,
-      expiresAt: new Date(Date.now() + parseInt(process.env.PASSWORD_RESET_EXPIRY))
-    });
-
-    // Construct reset link
-    const resetLink = `${process.env.REACT_APP_FRONTEND_URL}/reset-password/${resetToken}`;
-
-    // Send email using AWS SES
-    await sendPasswordResetEmail(email, resetLink);
-
-    res.status(200).json({ message: 'Password reset link sent successfully' });
-  } catch (error) {
-    console.error('Password reset request error:', error);
-    res.status(500).json({ 
-      message: error.message || 'Failed to process password reset request',
-      details: error.toString()
-    });
   }
-});
+);
 
 // Verify reset token
 router.post('/verify-token', async (req, res) => {
@@ -228,6 +252,7 @@ router.post('/reset', async (req, res) => {
 
     // Rate limiting for reset attempts
     const resetKey = `${email}_${token}`;
+    const resetAttempts = {};
     if (resetAttempts[resetKey]) {
       const { attempts, lastAttempt, lockedUntil } = resetAttempts[resetKey];
       
@@ -240,11 +265,11 @@ router.post('/reset', async (req, res) => {
       }
 
       // Check reset attempt frequency
-      if (attempts >= MAX_RESET_ATTEMPTS) {
+      if (attempts >= 3) {
         resetAttempts[resetKey] = {
           attempts: attempts + 1,
           lastAttempt: currentTime,
-          lockedUntil: currentTime + RESET_LOCKOUT_DURATION
+          lockedUntil: currentTime + 24 * 60 * 60 * 1000
         };
         return res.status(429).json({ 
           message: 'Too many reset attempts. Please try again later.'
@@ -253,7 +278,8 @@ router.post('/reset', async (req, res) => {
     }
 
     // Validate password complexity
-    if (!validatePasswordComplexity(newPassword)) {
+    const complexityRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    if (!complexityRegex.test(newPassword)) {
       return res.status(400).json({ 
         message: 'Password does not meet complexity requirements',
         requirements: [
