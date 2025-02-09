@@ -84,7 +84,7 @@ const sendVerificationEmail = async (email, verificationToken) => {
     throw new Error('Email and verification token are required');
   }
 
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+  const verificationLink = `${process.env.REACT_APP_FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
   const params = {
     Source: process.env.AWS_SES_FROM_EMAIL,
