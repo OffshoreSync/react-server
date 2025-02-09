@@ -6,6 +6,17 @@ const validateGoogleToken = require('../middleware/googleTokenValidator');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const { getCountryCode } = require('../utils/countries');
+const crypto = require('crypto');
+const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+
+// Reuse the SES client configuration from passwordReset.js
+const sesClient = new SESClient({
+  region: process.env.AWS_SES_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_SES_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SES_SECRET_ACCESS_KEY
+  }
+});
 
 // Utility function for password complexity
 const validatePasswordComplexity = (password) => {
@@ -64,6 +75,69 @@ const blockDisposableEmails = (req, res, next) => {
   }
   
   next();
+};
+
+// Send verification email using AWS SES
+const sendVerificationEmail = async (email, verificationToken) => {
+  // Validate input
+  if (!email || !verificationToken) {
+    throw new Error('Email and verification token are required');
+  }
+
+  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+
+  const params = {
+    Source: process.env.AWS_SES_FROM_EMAIL,
+    Destination: {
+      ToAddresses: [email]
+    },
+    Message: {
+      Subject: {
+        Data: 'Verify Your OffshoreSync Account'
+      },
+      Body: {
+        Html: {
+          Data: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2>Email Verification</h2>
+              <p>Thank you for registering with OffshoreSync!</p>
+              <p>Click the link below to verify your email address:</p>
+              <a href="${verificationLink}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">
+                Verify Email
+              </a>
+              <p>If you did not create an account, please ignore this email.</p>
+              <p>This link will expire in 24 hours.</p>
+            </div>
+          `
+        },
+        Text: {
+          Data: `Email Verification Link: ${verificationLink}\n\nThis link will expire in 24 hours.`
+        }
+      }
+    }
+  };
+
+  try {
+    const command = new SendEmailCommand(params);
+    const response = await sesClient.send(command);
+    
+    console.log('Verification email sending response:', {
+      messageId: response.$metadata.requestId,
+      httpStatusCode: response.$metadata.httpStatusCode
+    });
+
+    return response;
+  } catch (error) {
+    console.error('Detailed SES Verification Email Send Error:', {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      requestId: error.$metadata?.requestId,
+      stack: error.stack
+    });
+
+    throw error;
+  }
 };
 
 // Register new user
@@ -191,6 +265,28 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       }
     }
 
+    // For non-Google users, add verification
+    let verificationToken = null;
+    let verificationTokenExpires = null;
+
+    if (!googleLogin) {
+      // Generate verification token
+      verificationToken = crypto.randomBytes(32).toString('hex');
+      verificationTokenExpires = new Date(Date.now() + 24 * 3600 * 1000); // 24 hours
+      
+      // Send verification email
+      try {
+        await sendVerificationEmail(email, verificationToken);
+      } catch (emailError) {
+        console.error('Verification email send failed:', emailError);
+        
+        return res.status(500).json({
+          message: 'Failed to send verification email',
+          error: emailError.message
+        });
+      }
+    }
+
     // Create new user
     const newUser = new User({
       username: sanitizedUsername,
@@ -203,7 +299,10 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       company: company || null,
       unitName: unitName || null,
       isGoogleUser: googleLogin || false,
-      profilePicture: googleLogin ? undefined : null // Set profilePicture to null for non-Google users
+      profilePicture: googleLogin ? undefined : null, // Set profilePicture to null for non-Google users
+      isVerified: googleLogin || false,
+      verificationToken,
+      verificationTokenExpires
     });
 
     // Hash password
@@ -266,7 +365,8 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
 
     res.status(201).json({ 
       user: userResponse, 
-      token 
+      token,
+      requiresVerification: !googleLogin
     });
 
   } catch (error) {
@@ -274,6 +374,162 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
     res.status(500).json({ 
       message: 'Server error during registration',
       error: error.message 
+    });
+  }
+});
+
+// Email verification route
+router.get('/verify-email', async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({ message: 'No verification token provided' });
+    }
+
+    // Find user with this token that hasn't expired
+    const user = await User.findOne({
+      verificationToken: token,
+      verificationTokenExpires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        message: 'Invalid or expired verification token' 
+      });
+    }
+
+    // Mark user as verified
+    user.isVerified = true;
+    user.verificationToken = null;
+    user.verificationTokenExpires = null;
+
+    await user.save();
+
+    res.status(200).json({ 
+      message: 'Email verified successfully. You can now log in.' 
+    });
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({ 
+      message: 'Server error during email verification' 
+    });
+  }
+});
+
+// Login user
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Enhanced logging for diagnostics
+    console.log(`Login attempt for username: ${username}`);
+
+    // Find user by username
+    const user = await User.findOne({ username });
+
+    if (!user) {
+      console.log(`Login failed: No user found with username ${username}`);
+      return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    // Detailed user information logging for diagnostics
+    console.log(`User found: 
+      Username: ${user.username}
+      Is Google User: ${user.isGoogleUser}
+      Password Hash Length: ${user.password ? user.password.length : 'No password'}
+    `);
+
+    // Additional check for password existence
+    if (!user.password && !user.isGoogleUser) {
+      console.error(`Login error: Non-Google user ${username} has no password`);
+      return res.status(400).json({ message: 'Account setup incomplete' });
+    }
+
+    // Check if user is not verified (for non-Google users)
+    if (!user.isGoogleUser && !user.isVerified) {
+      return res.status(403).json({ 
+        message: 'Please verify your email before logging in',
+        requiresVerification: true,
+        email: user.email
+      });
+    }
+
+    // Check password
+    let isMatch = false;
+    try {
+      // Use the new integrity verification method
+      const integrityResult = await user.verifyPasswordIntegrity(password);
+      console.log('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
+      
+      // Determine match based on integrity check
+      isMatch = integrityResult.isMatch;
+      
+      // If no match, log additional details
+      if (!isMatch) {
+        console.warn(`Login failed for user ${username}. Detailed integrity check:`);
+        console.warn(`Stored Hash Length: ${integrityResult.storedHashLength}`);
+        console.warn(`New Hash Length: ${integrityResult.newHashLength}`);
+        console.warn(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
+        console.warn(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
+      }
+    } catch (compareError) {
+      console.error(`Password comparison error for user ${username}:`, compareError);
+      return res.status(500).json({ message: 'Internal server error during password verification' });
+    }
+
+    console.log(`Password match result for ${username}: ${isMatch}`);
+
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    // Ensure profilePicture is null for non-Google users
+    if (!user.isGoogleUser && user.profilePicture !== null) {
+      console.log(`Resetting profile picture for non-Google user ${username}`);
+      user.profilePicture = null;
+      await user.save();
+    }
+
+    // Generate token
+    const token = jwt.sign(
+      { 
+        userId: user._id, 
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        isGoogleUser: user.isGoogleUser // Explicitly include isGoogleUser flag
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '1h' }
+    );
+
+    // Explicitly include all fields in the response
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        offshoreRole: user.offshoreRole,
+        workingRegime: user.workingRegime,
+        company: user.company || null,
+        workSchedule: user.workSchedule || {},
+        
+        // Explicitly include these fields with null fallback
+        unitName: user.unitName || null,
+        country: user.country || null,
+        isGoogleUser: user.isGoogleUser,
+        profilePicture: user.isGoogleUser ? user.profilePicture : null,
+        nextOnBoardDate: user.nextOnBoardDate || null
+      }
+    });
+  } catch (error) {
+    console.error('Login error for user:', req.body.username, error);
+    res.status(500).json({ 
+      message: 'Server error during login',
+      details: error.message 
     });
   }
 });
@@ -387,114 +643,6 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
     res.status(500).json({ 
       message: 'Internal server error during Google login',
       error: error.message 
-    });
-  }
-});
-
-// Login user
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    // Enhanced logging for diagnostics
-    console.log(`Login attempt for username: ${username}`);
-
-    // Find user by username
-    const user = await User.findOne({ username });
-
-    if (!user) {
-      console.log(`Login failed: No user found with username ${username}`);
-      return res.status(400).json({ message: 'Invalid username or password' });
-    }
-
-    // Detailed user information logging for diagnostics
-    console.log(`User found: 
-      Username: ${user.username}
-      Is Google User: ${user.isGoogleUser}
-      Password Hash Length: ${user.password ? user.password.length : 'No password'}
-    `);
-
-    // Additional check for password existence
-    if (!user.password && !user.isGoogleUser) {
-      console.error(`Login error: Non-Google user ${username} has no password`);
-      return res.status(400).json({ message: 'Account setup incomplete' });
-    }
-
-    // Check password
-    let isMatch = false;
-    try {
-      // Use the new integrity verification method
-      const integrityResult = await user.verifyPasswordIntegrity(password);
-      console.log('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
-      
-      // Determine match based on integrity check
-      isMatch = integrityResult.isMatch;
-      
-      // If no match, log additional details
-      if (!isMatch) {
-        console.warn(`Login failed for user ${username}. Detailed integrity check:`);
-        console.warn(`Stored Hash Length: ${integrityResult.storedHashLength}`);
-        console.warn(`New Hash Length: ${integrityResult.newHashLength}`);
-        console.warn(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
-        console.warn(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
-      }
-    } catch (compareError) {
-      console.error(`Password comparison error for user ${username}:`, compareError);
-      return res.status(500).json({ message: 'Internal server error during password verification' });
-    }
-
-    console.log(`Password match result for ${username}: ${isMatch}`);
-
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid username or password' });
-    }
-
-    // Ensure profilePicture is null for non-Google users
-    if (!user.isGoogleUser && user.profilePicture !== null) {
-      console.log(`Resetting profile picture for non-Google user ${username}`);
-      user.profilePicture = null;
-      await user.save();
-    }
-
-    // Generate token
-    const token = jwt.sign(
-      { 
-        userId: user._id, 
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        isGoogleUser: user.isGoogleUser // Explicitly include isGoogleUser flag
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
-    );
-
-    // Explicitly include all fields in the response
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        offshoreRole: user.offshoreRole,
-        workingRegime: user.workingRegime,
-        company: user.company || null,
-        workSchedule: user.workSchedule || {},
-        
-        // Explicitly include these fields with null fallback
-        unitName: user.unitName || null,
-        country: user.country || null,
-        isGoogleUser: user.isGoogleUser,
-        profilePicture: user.isGoogleUser ? user.profilePicture : null,
-        nextOnBoardDate: user.nextOnBoardDate || null
-      }
-    });
-  } catch (error) {
-    console.error('Login error for user:', req.body.username, error);
-    res.status(500).json({ 
-      message: 'Server error during login',
-      details: error.message 
     });
   }
 });
