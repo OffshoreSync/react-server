@@ -42,12 +42,71 @@ router.post('/register', async (req, res) => {
       password, 
       fullName, 
       offshoreRole, 
-      workingRegime,
-      company, 
-      unitName, 
+      workingRegime, 
+      customOnDutyDays, 
+      customOffDutyDays,
       country,
+      company,
+      unitName,
       googleLogin // New flag
     } = req.body;
+
+    // Validate required fields
+    if (!username || !email || !password || !fullName || !offshoreRole || !country) {
+      return res.status(400).json({ 
+        message: 'Missing required fields',
+        errors: {
+          username: !username ? 'Username is required' : undefined,
+          email: !email ? 'Email is required' : undefined,
+          password: !password ? 'Password is required' : undefined,
+          fullName: !fullName ? 'Full name is required' : undefined,
+          offshoreRole: !offshoreRole ? 'Offshore role is required' : undefined,
+          country: !country ? 'Country is required' : undefined
+        }
+      });
+    }
+
+    // Prepare working regime
+    let userWorkingRegime;
+    const predefinedRegimes = User.getPredefinedRegimes();
+
+    if (workingRegime === 'custom') {
+      // Validate custom working regime
+      if (!customOnDutyDays || !customOffDutyDays) {
+        return res.status(400).json({ 
+          message: 'Custom working regime requires both on and off duty days',
+          errors: {
+            customOnDutyDays: !customOnDutyDays ? 'On duty days are required' : undefined,
+            customOffDutyDays: !customOffDutyDays ? 'Off duty days are required' : undefined
+          }
+        });
+      }
+
+      const totalDays = parseInt(customOnDutyDays, 10) + parseInt(customOffDutyDays, 10);
+      if (totalDays > 365) {
+        return res.status(400).json({ 
+          message: 'Total working days must not exceed 365',
+          errors: {
+            customOnDutyDays: 'Total on and off duty days must not exceed 365',
+            customOffDutyDays: 'Total on and off duty days must not exceed 365'
+          }
+        });
+      }
+
+      userWorkingRegime = {
+        onDutyDays: parseInt(customOnDutyDays, 10),
+        offDutyDays: parseInt(customOffDutyDays, 10)
+      };
+    } else {
+      // Use predefined regime
+      if (!predefinedRegimes[workingRegime]) {
+        return res.status(400).json({ 
+          message: 'Invalid working regime',
+          errors: { workingRegime: 'Selected working regime is not valid' }
+        });
+      }
+      userWorkingRegime = predefinedRegimes[workingRegime];
+    }
 
     // Sanitize and validate inputs
     const sanitizedUsername = sanitizeUsername(username);
@@ -74,24 +133,10 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Validate required fields
-    if (!sanitizedUsername || !email || !fullName || !offshoreRole || !workingRegime || !country) {
-      console.error('Missing required fields');
-      return res.status(400).json({ 
-        message: 'Missing required fields', 
-        missingFields: {
-          username: !sanitizedUsername,
-          email: !email,
-          fullName: !fullName,
-          offshoreRole: !offshoreRole,
-          workingRegime: !workingRegime,
-          country: !country
-        }
-      });
-    }
-
     // Check if user already exists
-    let existingUser = await User.findOne({ $or: [{ username: sanitizedUsername }, { email }] });
+    const existingUser = await User.findOne({ 
+      $or: [{ username: sanitizedUsername }, { email }] 
+    });
 
     if (existingUser) {
       // If Google login, update existing user
@@ -101,7 +146,13 @@ router.post('/register', async (req, res) => {
       } else if (existingUser.isGoogleUser) {
         return res.status(400).json({ message: 'Google user already exists' });
       } else {
-        return res.status(400).json({ message: 'User already exists with this username or email' });
+        return res.status(400).json({ 
+          message: 'User already exists',
+          errors: {
+            username: existingUser.username === sanitizedUsername ? 'Username is already taken' : undefined,
+            email: existingUser.email === email ? 'Email is already registered' : undefined
+          }
+        });
       }
     }
 
@@ -112,13 +163,10 @@ router.post('/register', async (req, res) => {
       password: googleLogin ? undefined : password, // Optional for Google users
       fullName,
       offshoreRole,
-      workingRegime: {
-        onDutyDays: workingRegime.onDutyDays,
-        offDutyDays: workingRegime.offDutyDays
-      },
+      workingRegime: userWorkingRegime,
+      country,
       company: company || null,
       unitName: unitName || null,
-      country,
       isGoogleUser: googleLogin || false,
       profilePicture: googleLogin ? undefined : null // Set profilePicture to null for non-Google users
     });
