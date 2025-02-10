@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');  // Add path module
 const crypto = require('crypto');
 const cookieParser = require('cookie-parser');  // Add this import
+const jwt = require('jsonwebtoken'); // Add jwt import
 require('dotenv').config();
 
 const app = express();
@@ -14,54 +15,53 @@ const generateCSRFToken = () => {
 };
 
 const csrfProtection = (req, res, next) => {
-  // Skip CSRF for authentication and session check routes
-  if (req.path.startsWith('/api/auth/google-login') || 
-      req.path.startsWith('/api/auth/check-session') || 
-      req.path === '/api/csrf-token') {
+  // Always allow safe methods
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
 
-  // For other non-GET requests, perform CSRF validation
-  if (req.method !== 'GET') {
-    console.log('CSRF Protection Middleware');
-    console.log('Cookies:', req.cookies);
-    console.log('Headers:', req.headers);
+  // Completely exempt routes (minimal set)
+  const exemptRoutes = [
+    '/api/auth/google-login',
+    '/api/auth/check-session',
+    '/api/csrf-token'
+  ];
 
-    // Generate CSRF token if not exists
-    if (!req.cookies['XSRF-TOKEN']) {
-      const csrfToken = generateCSRFToken();
-      res.cookie('XSRF-TOKEN', csrfToken, {
-        httpOnly: false, // Accessible by client-side JS
-        sameSite: 'strict',
-        secure: process.env.NODE_ENV === 'production'
-      });
-      console.log('Generated new CSRF token:', csrfToken);
+  if (exemptRoutes.some(route => req.path.startsWith(route))) {
+    return next();
+  }
+
+  // Check for JWT token in Authorization header
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token) {
+    try {
+      // Verify the token to ensure it's valid
+      jwt.verify(token, process.env.JWT_SECRET);
+      // If token is valid, we can skip CSRF for authenticated routes
+      return next();
+    } catch (error) {
+      // Token is invalid, continue with CSRF validation
+      console.warn('Invalid JWT token, proceeding with CSRF check', { path: req.path });
     }
+  }
 
-    // Validate CSRF token for non-GET requests
-    const csrfCookie = req.cookies['XSRF-TOKEN'];
-    const csrfHeader = req.headers['x-xsrf-token'];
+  // Validate CSRF for other routes
+  const csrfCookie = req.cookies['XSRF-TOKEN'];
+  const csrfHeader = req.headers['x-xsrf-token'];
 
-    console.log('CSRF Cookie:', csrfCookie);
-    console.log('CSRF Header:', csrfHeader);
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    console.error('CSRF Token Validation Failed', {
+      path: req.path,
+      method: req.method,
+      hasCookie: !!csrfCookie,
+      hasHeader: !!csrfHeader,
+      tokensMatch: csrfCookie === csrfHeader
+    });
 
-    if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
-      console.error('CSRF Token Validation Failed', {
-        hasCookie: !!csrfCookie,
-        hasHeader: !!csrfHeader,
-        tokensMatch: csrfCookie === csrfHeader
-      });
-
-      return res.status(403).json({ 
-        message: 'CSRF token validation failed',
-        error: 'INVALID_CSRF_TOKEN',
-        details: {
-          cookiePresent: !!csrfCookie,
-          headerPresent: !!csrfHeader,
-          tokensMatch: csrfCookie === csrfHeader
-        }
-      });
-    }
+    return res.status(403).json({ 
+      message: 'CSRF token validation failed',
+      error: 'INVALID_CSRF_TOKEN'
+    });
   }
 
   next();
