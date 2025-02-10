@@ -14,49 +14,54 @@ const generateCSRFToken = () => {
 };
 
 const csrfProtection = (req, res, next) => {
-  // Skip CSRF for certain routes or methods
-  if (req.method === 'GET' || req.path.startsWith('/api/auth/check-session') || req.path === '/api/csrf-token') {
+  // Skip CSRF for authentication and session check routes
+  if (req.path.startsWith('/api/auth/google-login') || 
+      req.path.startsWith('/api/auth/check-session') || 
+      req.path === '/api/csrf-token') {
     return next();
   }
 
-  console.log('CSRF Protection Middleware');
-  console.log('Cookies:', req.cookies);
-  console.log('Headers:', req.headers);
+  // For other non-GET requests, perform CSRF validation
+  if (req.method !== 'GET') {
+    console.log('CSRF Protection Middleware');
+    console.log('Cookies:', req.cookies);
+    console.log('Headers:', req.headers);
 
-  // Generate CSRF token if not exists
-  if (!req.cookies['XSRF-TOKEN']) {
-    const csrfToken = generateCSRFToken();
-    res.cookie('XSRF-TOKEN', csrfToken, {
-      httpOnly: false, // Accessible by client-side JS
-      sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production'
-    });
-    console.log('Generated new CSRF token:', csrfToken);
-  }
+    // Generate CSRF token if not exists
+    if (!req.cookies['XSRF-TOKEN']) {
+      const csrfToken = generateCSRFToken();
+      res.cookie('XSRF-TOKEN', csrfToken, {
+        httpOnly: false, // Accessible by client-side JS
+        sameSite: 'strict',
+        secure: process.env.NODE_ENV === 'production'
+      });
+      console.log('Generated new CSRF token:', csrfToken);
+    }
 
-  // Validate CSRF token for non-GET requests
-  const csrfCookie = req.cookies['XSRF-TOKEN'];
-  const csrfHeader = req.headers['x-xsrf-token'];
+    // Validate CSRF token for non-GET requests
+    const csrfCookie = req.cookies['XSRF-TOKEN'];
+    const csrfHeader = req.headers['x-xsrf-token'];
 
-  console.log('CSRF Cookie:', csrfCookie);
-  console.log('CSRF Header:', csrfHeader);
+    console.log('CSRF Cookie:', csrfCookie);
+    console.log('CSRF Header:', csrfHeader);
 
-  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
-    console.error('CSRF Token Validation Failed', {
-      hasCookie: !!csrfCookie,
-      hasHeader: !!csrfHeader,
-      tokensMatch: csrfCookie === csrfHeader
-    });
-
-    return res.status(403).json({ 
-      message: 'CSRF token validation failed',
-      error: 'INVALID_CSRF_TOKEN',
-      details: {
-        cookiePresent: !!csrfCookie,
-        headerPresent: !!csrfHeader,
+    if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+      console.error('CSRF Token Validation Failed', {
+        hasCookie: !!csrfCookie,
+        hasHeader: !!csrfHeader,
         tokensMatch: csrfCookie === csrfHeader
-      }
-    });
+      });
+
+      return res.status(403).json({ 
+        message: 'CSRF token validation failed',
+        error: 'INVALID_CSRF_TOKEN',
+        details: {
+          cookiePresent: !!csrfCookie,
+          headerPresent: !!csrfHeader,
+          tokensMatch: csrfCookie === csrfHeader
+        }
+      });
+    }
   }
 
   next();
