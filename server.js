@@ -70,7 +70,7 @@ app.use(cors({
     
     const allowedOrigins = [
       'http://localhost:3000', 
-      'https://yourdomain.com'
+      process.env.REACT_APP_FRONTEND_URL
     ];
     
     if (allowedOrigins.indexOf(origin) !== -1) {
