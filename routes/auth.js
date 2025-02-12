@@ -785,13 +785,21 @@ router.put('/update-profile', async (req, res) => {
     if (country !== undefined) user.country = country;
     if (unitName !== undefined) user.unitName = unitName;
 
+    // Explicitly handle company with clear removal support
+    if (company !== undefined) {
+      console.log('Incoming company:', company);
+      console.log('Existing user company:', user.company);
+      user.company = company || null;  // Set to null if empty string or falsy
+    }
+
     // Save updated user
     await user.save();
 
     // Log saved user for verification
     console.log('Updated user:', {
       country: user.country,
-      unitName: user.unitName
+      unitName: user.unitName,
+      company: user.company
     });
 
     // Generate new token with updated information
