@@ -26,7 +26,8 @@ const csrfProtection = (req, res, next) => {
     '/api/auth/check-session',
     '/api/csrf-token',
     '/api/auth/register',
-    '/api/auth/login'
+    '/api/auth/login',
+    '/api/auth/password/request-reset'
   ];
 
   if (exemptRoutes.some(route => req.path.startsWith(route))) {
