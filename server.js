@@ -24,7 +24,9 @@ const csrfProtection = (req, res, next) => {
   const exemptRoutes = [
     '/api/auth/google-login',
     '/api/auth/check-session',
-    '/api/csrf-token'
+    '/api/csrf-token',
+    '/api/auth/register',
+    '/api/auth/login'
   ];
 
   if (exemptRoutes.some(route => req.path.startsWith(route))) {
