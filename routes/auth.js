@@ -8,6 +8,7 @@ const path = require('path');
 const { getCountryCode } = require('../utils/countries');
 const crypto = require('crypto');
 const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+const rateLimit = require('express-rate-limit');
 
 // Reuse the SES client configuration from passwordReset.js
 const sesClient = new SESClient({
@@ -378,8 +379,20 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
   }
 });
 
+// Rate limiting for email verification
+const emailVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // Limit each IP to 3 email verification attempts per windowMs
+  message: {
+    error: 'Too many email verification attempts, please try again later',
+    translationKey: 'verifyEmail.error.tooManyAttempts'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
 // Email verification route
-router.get('/verify-email', async (req, res) => {
+router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
   try {
     const { token } = req.query;
 
