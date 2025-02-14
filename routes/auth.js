@@ -424,9 +424,10 @@ router.get('/verify-email', async (req, res) => {
       });
     }
 
-    // Mark user as verified but keep the token for reference
+    // Mark user as verified 
     user.isVerified = true;
-    user.verificationTokenUsedAt = new Date(); // Add a timestamp of when token was used
+    user.verificationToken = undefined; // Clear the verification token
+    user.verificationTokenExpires = undefined; // Clear token expiration
 
     await user.save();
 
