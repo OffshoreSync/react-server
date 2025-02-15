@@ -7,6 +7,7 @@ const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit'); // New import
 const { body, validationResult } = require('express-validator'); // New import
+const { safeLog, redactSensitiveData } = require('../utils/logger');
 
 // Validate AWS SES Configuration
 const validateSESConfig = () => {
@@ -82,21 +83,19 @@ const sendPasswordResetEmail = async (email, resetLink) => {
     const command = new SendEmailCommand(params);
     const response = await sesClient.send(command);
     
-    console.log('Email sending response:', {
+    safeLog('Email sending response:', redactSensitiveData({
       messageId: response.$metadata.requestId,
       httpStatusCode: response.$metadata.httpStatusCode
-    });
+    }));
 
     return response;
   } catch (error) {
     // Comprehensive error logging
-    console.error('Detailed SES Email Send Error:', {
+    safeLog('Detailed SES Email Send Error:', redactSensitiveData({
       message: error.message,
       name: error.name,
       code: error.code,
-      requestId: error.$metadata?.requestId,
-      stack: error.stack
-    });
+    }));
 
     // Specific error handling
     if (error.name === 'MessageRejected') {
@@ -189,7 +188,7 @@ router.post('/request-reset',
 
       res.status(200).json({ message: 'Password reset link sent successfully' });
     } catch (error) {
-      console.error('Password reset request error:', error);
+      safeLog('Password reset request error:', redactSensitiveData(error));
       res.status(500).json({ 
         message: error.message || 'Failed to process password reset request',
         details: error.toString()
@@ -215,7 +214,7 @@ router.post('/verify-token', async (req, res) => {
 
     res.status(200).json({ message: 'Token is valid' });
   } catch (error) {
-    console.error('Verify token error:', error);
+    safeLog('Verify token error:', redactSensitiveData(error));
     res.status(500).json({ 
       message: error.message || 'Failed to verify token',
       details: error.toString()
@@ -327,7 +326,7 @@ router.post('/reset', async (req, res) => {
 
     res.status(200).json({ message: 'Password reset successfully' });
   } catch (error) {
-    console.error('Password reset error:', error);
+    safeLog('Password reset error:', redactSensitiveData(error));
     res.status(500).json({ 
       message: 'Failed to reset password',
       details: error.message 

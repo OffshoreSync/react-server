@@ -1,5 +1,6 @@
 const { OAuth2Client } = require('google-auth-library');
 const geoip = require('geoip-lite');
+const { safeLog, redactSensitiveData } = require('../utils/logger');
 
 const client = new OAuth2Client(process.env.REACT_APP_GOOGLE_CLIENT_ID);
 
@@ -65,10 +66,10 @@ const validateGoogleToken = async (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error('Google token validation error:', error);
+    safeLog('Google token validation error:', redactSensitiveData(error));
     return res.status(401).json({ 
       message: 'Failed to validate Google token',
-      error: error.message 
+      error: redactSensitiveData(error.message) 
     });
   }
 };

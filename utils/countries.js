@@ -1,4 +1,6 @@
 // Server-side country mapping utility
+const { safeLog, redactSensitiveData } = require('./logger');
+
 const OFFSHORE_COUNTRIES = [
   { code: 'US', name: 'United States', rank: 1 },
   { code: 'BR', name: 'Brazil', rank: 2 },

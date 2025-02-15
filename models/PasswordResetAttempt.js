@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { safeLog, redactSensitiveData } = require('../utils/logger');
 
 const PasswordResetAttemptSchema = new mongoose.Schema({
   email: {

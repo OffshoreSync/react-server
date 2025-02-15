@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { safeLog, redactSensitiveData } = require('../utils/logger');
 
 const WorkingRegimeSchema = new mongoose.Schema({
   onDutyDays: {
@@ -161,15 +162,15 @@ UserSchema.pre('save', async function(next) {
   // Only hash password if it has been modified or is new
   if (this.isModified('password') && !this.isGoogleUser) {
     try {
-      console.log('Pre-save password hashing triggered');
-      console.log(`Password modification for user: ${this.username}`);
+      safeLog('Pre-save password hashing triggered');
+      safeLog(`Password modification for user: ${this.username}`);
       
       // Use a consistent salt round
       const SALT_ROUNDS = 10;
       
       // If password is already a hash, skip re-hashing
       if (this.password.startsWith('$2')) {
-        console.log('Password already appears to be hashed. Skipping re-hash.');
+        safeLog('Password already appears to be hashed. Skipping re-hash.');
         return next();
       }
       
@@ -177,14 +178,14 @@ UserSchema.pre('save', async function(next) {
       const salt = await bcrypt.genSalt(SALT_ROUNDS);
       const hashedPassword = await bcrypt.hash(this.password, salt);
       
-      console.log(`Pre-save hash generation for ${this.username}`);
-      console.log(`Original password length: ${this.password.length}`);
-      console.log(`Hashed password length: ${hashedPassword.length}`);
+      safeLog(`Pre-save hash generation for ${this.username}`);
+      safeLog(`Original password length: ${this.password.length}`);
+      safeLog(`Hashed password length: ${hashedPassword.length}`);
       
       // Replace password with hashed version
       this.password = hashedPassword;
     } catch (error) {
-      console.error('Pre-save password hashing error:', error);
+      safeLog('Pre-save password hashing error:', redactSensitiveData(error));
       return next(error);
     }
   }
@@ -193,29 +194,29 @@ UserSchema.pre('save', async function(next) {
 
 // Method to compare password
 UserSchema.methods.comparePassword = async function(candidatePassword) {
-  console.log(`Comparing password for user: ${this.username}`);
-  console.log(`Candidate password length: ${candidatePassword.length}`);
-  console.log(`Stored password hash length: ${this.password.length}`);
+  safeLog(`Comparing password for user: ${this.username}`);
+  safeLog(`Candidate password length: ${candidatePassword.length}`);
+  safeLog(`Stored password hash length: ${this.password.length}`);
   
   try {
     const isMatch = await bcrypt.compare(candidatePassword, this.password);
-    console.log(`Password comparison result: ${isMatch}`);
+    safeLog(`Password comparison result: ${isMatch}`);
     return isMatch;
   } catch (error) {
-    console.error('Error during password comparison:', error);
+    safeLog('Error during password comparison:', redactSensitiveData(error));
     throw error;
   }
 };
 
 // Diagnostic method to help troubleshoot password issues
 UserSchema.methods.debugPasswordIssue = async function(candidatePassword) {
-  console.log('===== PASSWORD DEBUGGING =====');
-  console.log(`Username: ${this.username}`);
-  console.log(`Is Google User: ${this.isGoogleUser}`);
+  safeLog('===== PASSWORD DEBUGGING =====');
+  safeLog(`Username: ${this.username}`);
+  safeLog(`Is Google User: ${this.isGoogleUser}`);
   
   // Check password existence
   if (!this.password) {
-    console.error('No password hash found for user');
+    safeLog('No password hash found for user');
     return { 
       error: 'No password hash', 
       details: 'User account may be improperly configured' 
@@ -224,17 +225,17 @@ UserSchema.methods.debugPasswordIssue = async function(candidatePassword) {
 
   // Try different comparison scenarios
   try {
-    console.log('Attempting direct bcrypt comparison...');
+    safeLog('Attempting direct bcrypt comparison...');
     const isMatch = await bcrypt.compare(candidatePassword, this.password);
-    console.log(`Direct bcrypt comparison result: ${isMatch}`);
+    safeLog(`Direct bcrypt comparison result: ${isMatch}`);
 
     // Additional diagnostic checks
-    console.log('Checking password complexity...');
-    console.log(`Candidate password length: ${candidatePassword.length}`);
-    console.log(`Stored hash length: ${this.password.length}`);
+    safeLog('Checking password complexity...');
+    safeLog(`Candidate password length: ${candidatePassword.length}`);
+    safeLog(`Stored hash length: ${this.password.length}`);
 
     // Optional: Check for common password reset or migration scenarios
-    console.log('Checking for potential migration or reset scenarios...');
+    safeLog('Checking for potential migration or reset scenarios...');
     const potentialResetPatterns = [
       'reset', 
       'temporary', 
@@ -246,7 +247,7 @@ UserSchema.methods.debugPasswordIssue = async function(candidatePassword) {
     );
 
     if (matchesPotentialResetPattern) {
-      console.warn('Candidate password matches potential reset pattern');
+      safeLog('Candidate password matches potential reset pattern');
     }
 
     return {
@@ -256,7 +257,7 @@ UserSchema.methods.debugPasswordIssue = async function(candidatePassword) {
       matchesPotentialResetPattern
     };
   } catch (error) {
-    console.error('Error during password debugging:', error);
+    safeLog('Error during password debugging:', redactSensitiveData(error));
     return { 
       error: 'Debugging failed', 
       details: error.message 
@@ -266,16 +267,16 @@ UserSchema.methods.debugPasswordIssue = async function(candidatePassword) {
 
 // Advanced password debugging method
 UserSchema.methods.advancedPasswordDebug = async function(candidatePassword) {
-  console.log('===== ADVANCED PASSWORD DEBUGGING =====');
+  safeLog('===== ADVANCED PASSWORD DEBUGGING =====');
   
   try {
     // Generate a new hash from the candidate password
     const saltRounds = 10;
     const newHash = await bcrypt.hash(candidatePassword, saltRounds);
     
-    console.log('Comparison Analysis:');
-    console.log(`Original Stored Hash: ${this.password}`);
-    console.log(`Newly Generated Hash: ${newHash}`);
+    safeLog('Comparison Analysis:');
+    safeLog(`Original Stored Hash: ${this.password}`);
+    safeLog(`Newly Generated Hash: ${newHash}`);
     
     // Detailed character-by-character comparison
     const originalHashChars = this.password.split('');
@@ -286,22 +287,22 @@ UserSchema.methods.advancedPasswordDebug = async function(candidatePassword) {
     
     for (let i = 0; i < maxLength; i++) {
       if (originalHashChars[i] !== newHashChars[i]) {
-        console.log(`Difference at index ${i}:`);
-        console.log(`  Original: ${originalHashChars[i] || 'N/A'}`);
-        console.log(`  New:      ${newHashChars[i] || 'N/A'}`);
+        safeLog(`Difference at index ${i}:`);
+        safeLog(`  Original: ${originalHashChars[i] || 'N/A'}`);
+        safeLog(`  New:      ${newHashChars[i] || 'N/A'}`);
         differentChars++;
       }
     }
     
-    console.log(`Total different characters: ${differentChars}`);
+    safeLog(`Total different characters: ${differentChars}`);
     
     // Additional bcrypt-specific checks
     const bcryptVersionCheck = this.password.startsWith('$2');
     const newHashVersionCheck = newHash.startsWith('$2');
     
-    console.log('BCrypt Version Checks:');
-    console.log(`  Original Hash BCrypt Version: ${bcryptVersionCheck}`);
-    console.log(`  New Hash BCrypt Version:      ${newHashVersionCheck}`);
+    safeLog('BCrypt Version Checks:');
+    safeLog(`  Original Hash BCrypt Version: ${bcryptVersionCheck}`);
+    safeLog(`  New Hash BCrypt Version:      ${newHashVersionCheck}`);
     
     return {
       originalHashLength: this.password.length,
@@ -310,7 +311,7 @@ UserSchema.methods.advancedPasswordDebug = async function(candidatePassword) {
       bcryptVersionMatches: bcryptVersionCheck === newHashVersionCheck
     };
   } catch (error) {
-    console.error('Advanced password debugging failed:', error);
+    safeLog('Advanced password debugging failed:', redactSensitiveData(error));
     return { 
       error: 'Advanced debugging failed', 
       details: error.message 
@@ -320,12 +321,12 @@ UserSchema.methods.advancedPasswordDebug = async function(candidatePassword) {
 
 // Method to verify password hashing and storage
 UserSchema.methods.verifyPasswordIntegrity = async function(plainTextPassword) {
-  console.log('===== PASSWORD INTEGRITY CHECK =====');
-  console.log(`Username: ${this.username}`);
-  console.log(`Is Google User: ${this.isGoogleUser}`);
+  safeLog('===== PASSWORD INTEGRITY CHECK =====');
+  safeLog(`Username: ${this.username}`);
+  safeLog(`Is Google User: ${this.isGoogleUser}`);
   
   if (!this.password) {
-    console.error('No password hash found for user');
+    safeLog('No password hash found for user');
     return { 
       hasPassword: false,
       error: 'No password hash exists' 
@@ -336,19 +337,19 @@ UserSchema.methods.verifyPasswordIntegrity = async function(plainTextPassword) {
     // Attempt to compare the password
     const isMatch = await bcrypt.compare(plainTextPassword, this.password);
     
-    console.log('Detailed Password Hash Analysis:');
-    console.log(`Stored Password Hash Length: ${this.password.length}`);
-    console.log(`Stored Password Hash Prefix: ${this.password.substring(0, 20)}...`);
-    console.log(`BCrypt Version Check: ${this.password.startsWith('$2')}`);
+    safeLog('Detailed Password Hash Analysis:');
+    safeLog(`Stored Password Hash Length: ${this.password.length}`);
+    safeLog(`Stored Password Hash Prefix: ${this.password.substring(0, 20)}...`);
+    safeLog(`BCrypt Version Check: ${this.password.startsWith('$2')}`);
     
     // Regenerate hash to compare
     const newSalt = await bcrypt.genSalt(10);
     const newHash = await bcrypt.hash(plainTextPassword, newSalt);
     
-    console.log('Regenerated Hash Comparison:');
-    console.log(`New Hash Length: ${newHash.length}`);
-    console.log(`New Hash Prefix: ${newHash.substring(0, 20)}...`);
-    console.log(`BCrypt Version Check: ${newHash.startsWith('$2')}`);
+    safeLog('Regenerated Hash Comparison:');
+    safeLog(`New Hash Length: ${newHash.length}`);
+    safeLog(`New Hash Prefix: ${newHash.substring(0, 20)}...`);
+    safeLog(`BCrypt Version Check: ${newHash.startsWith('$2')}`);
     
     return {
       isMatch,
@@ -358,7 +359,7 @@ UserSchema.methods.verifyPasswordIntegrity = async function(plainTextPassword) {
       newHashPrefix: newHash.substring(0, 20)
     };
   } catch (error) {
-    console.error('Password integrity check failed:', error);
+    safeLog('Password integrity check failed:', redactSensitiveData(error));
     return { 
       error: 'Integrity check failed', 
       details: error.message 

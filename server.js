@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const cookieParser = require('cookie-parser');  // Add this import
 const jwt = require('jsonwebtoken'); // Add jwt import
 require('dotenv').config();
+const { safeLog } = require('./utils/logger');
 
 const app = express();
 
@@ -45,7 +46,7 @@ const csrfProtection = (req, res, next) => {
       return next();
     } catch (error) {
       // Token is invalid, continue with CSRF validation
-      console.warn('Invalid JWT token, proceeding with CSRF check', { path: req.path });
+      safeLog('Invalid JWT token, proceeding with CSRF check', { path: req.path });
     }
   }
 
@@ -54,7 +55,7 @@ const csrfProtection = (req, res, next) => {
   const csrfHeader = req.headers['x-xsrf-token'];
 
   if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
-    console.error('CSRF Token Validation Failed', {
+    safeLog('CSRF Token Validation Failed', {
       path: req.path,
       method: req.method,
       hasCookie: !!csrfCookie,
@@ -122,7 +123,7 @@ app.get('/api/csrf-token', (req, res) => {
     });
   }
 
-  console.log('CSRF Token Endpoint - Token:', csrfToken);
+  safeLog('CSRF Token Endpoint - Token:', csrfToken);
 
   res.json({ 
     csrfToken: csrfToken 
@@ -137,7 +138,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app', {
 
 const connection = mongoose.connection;
 connection.once('open', () => {
-  console.log('MongoDB database connection established successfully');
+  safeLog('MongoDB database connection established successfully');
 });
 
 // Routes
@@ -154,5 +155,5 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port: ${PORT}`);
+  safeLog(`Server is running on port: ${PORT}`);
 });

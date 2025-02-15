@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const { safeLog, redactSensitiveData } = require('../utils/logger');
 
 const PasswordResetSchema = new mongoose.Schema({
   user: {
@@ -20,12 +21,20 @@ const PasswordResetSchema = new mongoose.Schema({
 
 // Method to generate a secure reset token
 PasswordResetSchema.statics.generateResetToken = function() {
-  return crypto.randomBytes(32).toString('hex');
+  try {
+    return crypto.randomBytes(32).toString('hex');
+  } catch (error) {
+    safeLog('Password reset model error:', redactSensitiveData(error));
+  }
 };
 
 // Method to hash the token for secure storage
 PasswordResetSchema.statics.hashToken = function(token) {
-  return crypto.createHash('sha256').update(token).digest('hex');
+  try {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  } catch (error) {
+    safeLog('Password reset model error:', redactSensitiveData(error));
+  }
 };
 
 module.exports = mongoose.model('PasswordReset', PasswordResetSchema);

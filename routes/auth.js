@@ -9,10 +9,11 @@ const { getCountryCode } = require('../utils/countries');
 const crypto = require('crypto');
 const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const rateLimit = require('express-rate-limit');
+const { safeLog, redactSensitiveData } = require('../utils/logger');
 
-// Reuse the SES client configuration from passwordReset.js
+// Initialize SES client
 const sesClient = new SESClient({
-  region: process.env.AWS_SES_REGION,
+  region: process.env.AWS_SES_REGION || 'us-east-1',
   credentials: {
     accessKeyId: process.env.AWS_SES_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SES_SECRET_ACCESS_KEY
@@ -79,63 +80,52 @@ const blockDisposableEmails = (req, res, next) => {
 };
 
 // Send verification email using AWS SES
-const sendVerificationEmail = async (email, verificationToken) => {
-  // Validate input
-  if (!email || !verificationToken) {
-    throw new Error('Email and verification token are required');
-  }
-
-  const verificationLink = `${process.env.REACT_APP_FRONTEND_URL}/verify-email?token=${verificationToken}`;
-
-  const params = {
-    Source: process.env.AWS_SES_FROM_EMAIL,
-    Destination: {
-      ToAddresses: [email]
-    },
-    Message: {
-      Subject: {
-        Data: 'Verify Your OffshoreSync Account'
-      },
-      Body: {
-        Html: {
-          Data: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2>Email Verification</h2>
-              <p>Thank you for registering with OffshoreSync!</p>
-              <p>Click the link below to verify your email address:</p>
-              <a href="${verificationLink}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">
-                Verify Email
-              </a>
-              <p>If you did not create an account, please ignore this email.</p>
-              <p>This link will expire in 24 hours.</p>
-            </div>
-          `
-        },
-        Text: {
-          Data: `Email Verification Link: ${verificationLink}\n\nThis link will expire in 24 hours.`
+async function sendVerificationEmail(email, verificationToken) {
+  try {
+    const params = {
+      Source: process.env.AWS_SES_FROM_EMAIL, // Verified sender email
+      Destination: { ToAddresses: [email] },
+      Message: {
+        Subject: { Data: 'Verify Your OffshoreSync Account' },
+        Body: {
+          Html: {
+            Data: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2>Email Verification</h2>
+                <p>Thank you for registering with OffshoreSync!</p>
+                <p>Click the link below to verify your email address:</p>
+                <a href="${process.env.REACT_APP_FRONTEND_URL}/verify-email?token=${verificationToken}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">
+                  Verify Email
+                </a>
+                <p>If you did not create an account, please ignore this email.</p>
+                <p>This link will expire in 24 hours.</p>
+              </div>
+            `
+          },
+          Text: {
+            Data: `Email Verification Link: ${process.env.REACT_APP_FRONTEND_URL}/verify-email?token=${verificationToken}\n\nThis link will expire in 24 hours.`
+          }
         }
       }
-    }
-  };
+    };
 
-  try {
     const command = new SendEmailCommand(params);
     const response = await sesClient.send(command);
     
-    console.log('Verification email sending response:', {
+    safeLog('Verification email sending response:', redactSensitiveData({
       messageId: response.$metadata.requestId,
       httpStatusCode: response.$metadata.httpStatusCode
-    });
+    }));
 
     return response;
   } catch (error) {
-    console.error('Detailed SES Verification Email Send Error:', {
+    safeLog('Detailed SES Verification Email Send Error:', redactSensitiveData({
       message: error.message,
       name: error.name,
       code: error.code,
       requestId: error.$metadata?.requestId,
       stack: error.stack
-    });
+    }));
 
     throw error;
   }
@@ -144,7 +134,7 @@ const sendVerificationEmail = async (email, verificationToken) => {
 // Register new user
 router.post('/register', blockDisposableEmails, async (req, res) => {
   try {
-    console.log('Received registration data:', JSON.stringify(req.body, null, 2));
+    safeLog('Received registration data:', redactSensitiveData(req.body));
 
     const { 
       username, 
@@ -279,7 +269,7 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       try {
         await sendVerificationEmail(email, verificationToken);
       } catch (emailError) {
-        console.error('Verification email send failed:', emailError);
+        safeLog('Verification email send failed:', redactSensitiveData(emailError));
         
         return res.status(500).json({
           message: 'Failed to send verification email',
@@ -308,29 +298,29 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
 
     // Hash password
     if (!googleLogin) {
-      console.log('Hashing password for non-Google user');
-      console.log(`Password length: ${password.length}`);
+      safeLog('Hashing password for non-Google user');
+      safeLog(`Password length: ${password.length}`);
       
       const salt = await bcrypt.genSalt(10);
-      console.log(`Generated salt: ${salt}`);
+      safeLog(`Generated salt: ${salt}`);
       
       const hashedPassword = await bcrypt.hash(password, salt);
-      console.log(`Hashed password length: ${hashedPassword.length}`);
-      console.log(`Hashed password starts with: ${hashedPassword.substring(0, 20)}...`);
+      safeLog(`Hashed password length: ${hashedPassword.length}`);
+      safeLog(`Hashed password starts with: ${hashedPassword.substring(0, 20)}...`);
       
       newUser.password = hashedPassword;
       
       // Additional verification
-      console.log('Verifying password hash...');
+      safeLog('Verifying password hash...');
       const verifyMatch = await bcrypt.compare(password, hashedPassword);
-      console.log(`Password verification result: ${verifyMatch}`);
+      safeLog(`Password verification result: ${verifyMatch}`);
     }
 
     // Save user to database
     try {
       await newUser.save();
     } catch (saveError) {
-      console.error('User save error:', saveError);
+      safeLog('User save error:', redactSensitiveData(saveError));
       return res.status(400).json({ 
         message: 'Error saving user', 
         details: saveError.message,
@@ -371,7 +361,7 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Registration error:', error);
+    safeLog('Registration error:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Server error during registration',
       error: error.message 
@@ -396,10 +386,10 @@ router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
   try {
     const { token } = req.query;
 
-    console.log('Received verification token:', token);
+    safeLog('Received verification token', token ? 'Token present' : 'No token');
 
     if (!token) {
-      console.warn('No verification token provided');
+      safeLog('No verification token provided');
       return res.status(400).json({ 
         message: 'No verification token provided',
         error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
@@ -412,9 +402,9 @@ router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
       verificationTokenExpires: { $gt: new Date() }
     });
 
-    console.log('User found during verification:', user ? user.email : 'No user found');
-    console.log('Current time:', new Date());
-    console.log('Token expiration:', user ? user.verificationTokenExpires : 'N/A');
+    safeLog('User found during verification', user ? 'User exists' : 'No user found');
+    safeLog('Current time', new Date().toISOString());
+    safeLog('Token expiration', user ? 'Token has expiration' : 'No expiration');
 
     if (!user) {
       // Check if user exists but is already verified
@@ -423,14 +413,14 @@ router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
       });
 
       if (existingUser && existingUser.isVerified) {
-        console.log(`User ${existingUser.email} is already verified`);
+        safeLog(`User ${existingUser.email} is already verified`);
         return res.status(200).json({ 
           message: req.t ? req.t('verifyEmail.success.message') : 'Email is already verified. You can now log in.',
           alreadyVerified: true
         });
       }
 
-      console.warn('Invalid or expired verification token');
+      safeLog('Invalid or expired verification token');
       return res.status(400).json({ 
         message: 'Invalid or expired verification token',
         error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
@@ -444,14 +434,14 @@ router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
 
     await user.save();
 
-    console.log(`User ${user.email} verified successfully`);
+    safeLog(`User ${user.email} verified successfully`);
 
     res.status(200).json({ 
       message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
       verified: true
     });
   } catch (error) {
-    console.error('Email verification error:', error);
+    safeLog('Email verification error:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Server error during email verification',
       error: error.message
@@ -464,19 +454,18 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Enhanced logging for diagnostics
-    console.log(`Login attempt for username: ${username}`);
+    safeLog(`Login attempt for username`, username ? 'Username provided' : 'No username');
 
     // Find user by username
     const user = await User.findOne({ username });
 
     if (!user) {
-      console.log(`Login failed: No user found with username ${username}`);
+      safeLog(`Login failed: No user found with username ${username}`);
       return res.status(400).json({ message: 'Invalid username or password' });
     }
 
     // Detailed user information logging for diagnostics
-    console.log(`User found: 
+    safeLog(`User found: 
       Username: ${user.username}
       Is Google User: ${user.isGoogleUser}
       Password Hash Length: ${user.password ? user.password.length : 'No password'}
@@ -484,7 +473,7 @@ router.post('/login', async (req, res) => {
 
     // Additional check for password existence
     if (!user.password && !user.isGoogleUser) {
-      console.error(`Login error: Non-Google user ${username} has no password`);
+      safeLog(`Login error: Non-Google user ${username} has no password`);
       return res.status(400).json({ message: 'Account setup incomplete' });
     }
 
@@ -502,25 +491,25 @@ router.post('/login', async (req, res) => {
     try {
       // Use the new integrity verification method
       const integrityResult = await user.verifyPasswordIntegrity(password);
-      console.log('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
+      safeLog('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
       
       // Determine match based on integrity check
       isMatch = integrityResult.isMatch;
       
       // If no match, log additional details
       if (!isMatch) {
-        console.warn(`Login failed for user ${username}. Detailed integrity check:`);
-        console.warn(`Stored Hash Length: ${integrityResult.storedHashLength}`);
-        console.warn(`New Hash Length: ${integrityResult.newHashLength}`);
-        console.warn(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
-        console.warn(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
+        safeLog(`Login failed for user ${username}. Detailed integrity check:`);
+        safeLog(`Stored Hash Length: ${integrityResult.storedHashLength}`);
+        safeLog(`New Hash Length: ${integrityResult.newHashLength}`);
+        safeLog(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
+        safeLog(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
       }
     } catch (compareError) {
-      console.error(`Password comparison error for user ${username}:`, compareError);
+      safeLog(`Password comparison error for user ${username}:`, redactSensitiveData(compareError), 'error');
       return res.status(500).json({ message: 'Internal server error during password verification' });
     }
 
-    console.log(`Password match result for ${username}: ${isMatch}`);
+    safeLog(`Password match result for ${username}: ${isMatch}`);
 
     if (!isMatch) {
       return res.status(400).json({ message: 'Invalid username or password' });
@@ -528,7 +517,7 @@ router.post('/login', async (req, res) => {
 
     // Ensure profilePicture is null for non-Google users
     if (!user.isGoogleUser && user.profilePicture !== null) {
-      console.log(`Resetting profile picture for non-Google user ${username}`);
+      safeLog(`Resetting profile picture for non-Google user ${username}`);
       user.profilePicture = null;
       await user.save();
     }
@@ -562,12 +551,11 @@ router.post('/login', async (req, res) => {
         unitName: user.unitName || null,
         country: user.country || null,
         isGoogleUser: user.isGoogleUser,
-        profilePicture: user.isGoogleUser ? undefined : null,
         nextOnBoardDate: user.nextOnBoardDate || null
       }
     });
   } catch (error) {
-    console.error('Login error for user:', req.body.username, error);
+    safeLog('Login error for user:', req.body.username, 'error');
     res.status(500).json({ 
       message: 'Server error during login',
       details: error.message 
@@ -591,14 +579,14 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
     const countryCode = mapCountryToCode(country);
 
     // Log incoming profile details
-    console.log('Incoming Google Profile:', {
+    safeLog('Incoming Google Profile:', redactSensitiveData({
       email,
       name,
       picture,
       googleId,
       country,
       mappedCountryCode: countryCode
-    });
+    }));
 
     // Check if user already exists
     let user = await User.findOne({ email });
@@ -623,10 +611,10 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       });
 
       await user.save();
-      console.log('New user created with details:', {
+      safeLog('New user created with details:', redactSensitiveData({
         profilePicture: user.profilePicture,
         country: user.country
-      });
+      }));
     } else {
       // Update existing user's profile picture and country
       user.profilePicture = picture;
@@ -637,10 +625,10 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       }
 
       await user.save();
-      console.log('Existing user updated with details:', {
+      safeLog('Existing user updated with details:', redactSensitiveData({
         profilePicture: user.profilePicture,
         country: user.country
-      });
+      }));
     }
 
     // Generate JWT token
@@ -670,17 +658,17 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
     };
 
     // Additional logging
-    console.log('User Response:', {
+    safeLog('User Response:', redactSensitiveData({
       profilePicture: userResponse.profilePicture,
       country: userResponse.country
-    });
+    }));
 
     res.status(200).json({ 
       user: userResponse, 
       token 
     });
   } catch (error) {
-    console.error('Google Login Error:', JSON.stringify(error, null, 2));
+    safeLog('Google Login Error:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Internal server error during Google login',
       error: error.message 
@@ -722,7 +710,7 @@ router.delete('/delete-account', async (req, res) => {
 
     res.json({ message: 'Account deleted successfully' });
   } catch (error) {
-    console.error('Account deletion error:', error);
+    safeLog('Account deletion error:', redactSensitiveData(error), 'error');
     
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({ message: 'Invalid token' });
@@ -736,7 +724,7 @@ router.delete('/delete-account', async (req, res) => {
 router.put('/update-profile', async (req, res) => {
   try {
     // Log incoming request body for debugging
-    console.log('Received profile update request:', JSON.stringify(req.body, null, 2));
+    safeLog('Received profile update request:', redactSensitiveData(req.body));
 
     // Get token from headers
     const token = req.headers.authorization?.split(' ')[1];
@@ -790,10 +778,10 @@ router.put('/update-profile', async (req, res) => {
     if (workSchedule) user.workSchedule = workSchedule;
     
     // Explicitly handle country and unitName with logging
-    console.log('Incoming country:', country);
-    console.log('Incoming unitName:', unitName);
-    console.log('Existing user country:', user.country);
-    console.log('Existing user unitName:', user.unitName);
+    safeLog('Incoming country:', country);
+    safeLog('Incoming unitName:', unitName);
+    safeLog('Existing user country:', user.country);
+    safeLog('Existing user unitName:', user.unitName);
 
     // Preserve existing values if not provided
     if (country !== undefined) user.country = country;
@@ -801,8 +789,8 @@ router.put('/update-profile', async (req, res) => {
 
     // Explicitly handle company with clear removal support
     if (company !== undefined) {
-      console.log('Incoming company:', company);
-      console.log('Existing user company:', user.company);
+      safeLog('Incoming company:', company);
+      safeLog('Existing user company:', user.company);
       user.company = company || null;  // Set to null if empty string or falsy
     }
 
@@ -810,11 +798,11 @@ router.put('/update-profile', async (req, res) => {
     await user.save();
 
     // Log saved user for verification
-    console.log('Updated user:', {
+    safeLog('Updated user:', redactSensitiveData({
       country: user.country,
       unitName: user.unitName,
       company: user.company
-    });
+    }));
 
     // Generate new token with updated information
     const newToken = jwt.sign(
@@ -850,7 +838,7 @@ router.put('/update-profile', async (req, res) => {
       token: newToken
     });
   } catch (error) {
-    console.error('Profile update error:', error);
+    safeLog('Profile update error:', redactSensitiveData(error), 'error');
     
     if (error.name === 'ValidationError') {
       return res.status(400).json({ message: 'Validation error', details: error.errors });
@@ -893,10 +881,10 @@ router.get('/profile', async (req, res) => {
     }
 
     // Log user details for debugging
-    console.log('User Profile Details:', {
+    safeLog('User Profile Details:', redactSensitiveData({
       isGoogleUser: user.isGoogleUser,
       profilePicture: user.profilePicture
-    });
+    }));
 
     // Return user profile (excluding sensitive information)
     res.json({ 
@@ -919,7 +907,7 @@ router.get('/profile', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Profile retrieval error:', error);
+    safeLog('Profile retrieval error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error during profile retrieval' });
   }
 });
@@ -1014,7 +1002,7 @@ router.put('/set-onboard-date', async (req, res) => {
       token: newToken
     });
   } catch (error) {
-    console.error('Set on board date error:', error);
+    safeLog('Set on board date error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error during on board date update', error: error.message });
   }
 });
@@ -1058,7 +1046,7 @@ router.put('/reset-next-onboard-date', async (req, res) => {
       workSchedule: user.workSchedule 
     });
   } catch (error) {
-    console.error('Error resetting work schedule:', error);
+    safeLog('Error resetting work schedule:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Server error while resetting work schedule',
       error: error.message 
@@ -1194,14 +1182,14 @@ router.post('/generate-work-cycles', async (req, res) => {
       });
 
     } catch (error) {
-      console.error('Error generating work cycles:', error);
+      safeLog('Error generating work cycles:', redactSensitiveData(error), 'error');
       res.status(500).json({ 
         message: 'Server error while generating work cycles',
         error: error.message 
       });
     }
   } catch (error) {
-    console.error('Error generating work cycles:', error);
+    safeLog('Error generating work cycles:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Server error while generating work cycles',
       error: error.message 
@@ -1263,7 +1251,7 @@ router.get('/user-work-cycles/:userId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error retrieving user work cycles:', error);
+    safeLog('Error retrieving user work cycles:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Server error while retrieving user work cycles',
       error: error.message 
@@ -1323,7 +1311,7 @@ router.get('/all-users', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching all users:', error);
+    safeLog('Error fetching all users:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Server error while fetching users',
       error: error.message 
@@ -1404,7 +1392,7 @@ router.post('/friend-request', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Send friend request error:', error);
+    safeLog('Send friend request error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error sending friend request' });
   }
 });
@@ -1442,7 +1430,7 @@ router.put('/friend-request/:requestId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Friend request update error:', error);
+    safeLog('Friend request update error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error updating friend request' });
   }
 });
@@ -1481,7 +1469,7 @@ router.get('/friends', async (req, res) => {
     res.status(200).json({ friends });
 
   } catch (error) {
-    console.error('Get friends error:', error);
+    safeLog('Get friends error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error retrieving friends' });
   }
 });
@@ -1513,7 +1501,7 @@ router.get('/friend-requests', async (req, res) => {
     res.status(200).json({ pendingRequests: requests });
 
   } catch (error) {
-    console.error('Get pending requests error:', error);
+    safeLog('Get pending requests error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error retrieving pending requests' });
   }
 });
@@ -1577,7 +1565,7 @@ router.get('/search-users', async (req, res) => {
     res.status(200).json({ users: usersWithStatus });
 
   } catch (error) {
-    console.error('Search users error:', error);
+    safeLog('Search users error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error searching users' });
   }
 });
