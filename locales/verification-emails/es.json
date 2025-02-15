@@ -1,0 +1,4 @@
+{
+  "subject": "Verifique su Cuenta de OffshoreSync",
+  "body": "¡Bienvenido a OffshoreSync!\n\nPor favor, verifique su correo electrónico haciendo clic en el enlace a continuación:\n{{verificationLink}}\n\nSi no creó esta cuenta, ignore este correo electrónico.\n\nSaludos cordiales,\nEquipo de OffshoreSync"
+}

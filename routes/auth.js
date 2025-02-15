@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const rateLimit = require('express-rate-limit');
 const { safeLog, redactSensitiveData } = require('../utils/logger');
+const fs = require('fs');
 
 // Initialize SES client
 const sesClient = new SESClient({
@@ -79,54 +80,157 @@ const blockDisposableEmails = (req, res, next) => {
   next();
 };
 
-// Send verification email using AWS SES
-async function sendVerificationEmail(email, verificationToken) {
+// Function to load email translations
+const loadEmailTranslations = (language) => {
+  const translationPath = path.join(__dirname, '..', 'locales', 'verification-emails', `${language}.json`);
+  
   try {
-    const params = {
-      Source: process.env.AWS_SES_FROM_EMAIL, // Verified sender email
-      Destination: { ToAddresses: [email] },
-      Message: {
-        Subject: { Data: 'Verify Your OffshoreSync Account' },
-        Body: {
-          Html: {
-            Data: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2>Email Verification</h2>
-                <p>Thank you for registering with OffshoreSync!</p>
-                <p>Click the link below to verify your email address:</p>
-                <a href="${process.env.REACT_APP_FRONTEND_URL}/verify-email?token=${verificationToken}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">
-                  Verify Email
-                </a>
-                <p>If you did not create an account, please ignore this email.</p>
-                <p>This link will expire in 24 hours.</p>
-              </div>
-            `
-          },
-          Text: {
-            Data: `Email Verification Link: ${process.env.REACT_APP_FRONTEND_URL}/verify-email?token=${verificationToken}\n\nThis link will expire in 24 hours.`
-          }
-        }
+    // Ensure the directory exists
+    const directoryPath = path.dirname(translationPath);
+    fs.mkdirSync(directoryPath, { recursive: true });
+    
+    // Create default translation files if they don't exist
+    const defaultTranslations = {
+      en: {
+        subject: 'Verify Your OffshoreSync Account',
+        body: `Welcome to OffshoreSync! 
+
+Please verify your email by clicking the link below:
+{{verificationLink}}
+
+If you did not create an account, please ignore this email.
+
+Best regards,
+OffshoreSync Team`
+      },
+      pt: {
+        subject: 'Verifique sua Conta OffshoreSync',
+        body: `Bem-vindo ao OffshoreSync!
+
+Por favor, verifique seu e-mail clicando no link abaixo:
+{{verificationLink}}
+
+Se você não criou esta conta, por favor, ignore este e-mail.
+
+Melhores cumprimentos,
+Equipe OffshoreSync`
+      },
+      es: {
+        subject: 'Verifique su Cuenta de OffshoreSync',
+        body: `¡Bienvenido a OffshoreSync!
+
+Por favor, verifique su correo electrónico haciendo clic en el enlace a continuación:
+{{verificationLink}}
+
+Si no creó esta cuenta, ignore este correo electrónico.
+
+Saludos cordiales,
+Equipo de OffshoreSync`
       }
     };
 
-    const command = new SendEmailCommand(params);
-    const response = await sesClient.send(command);
-    
-    safeLog('Verification email sending response:', redactSensitiveData({
-      messageId: response.$metadata.requestId,
-      httpStatusCode: response.$metadata.httpStatusCode
-    }));
+    // If file doesn't exist, create it with default translations
+    if (!fs.existsSync(translationPath)) {
+      const defaultTranslation = defaultTranslations[language] || defaultTranslations['en'];
+      fs.writeFileSync(translationPath, JSON.stringify(defaultTranslation, null, 2));
+    }
 
-    return response;
+    // Read and parse the translation file
+    const translationContent = fs.readFileSync(translationPath, 'utf8');
+    return JSON.parse(translationContent);
   } catch (error) {
-    safeLog('Detailed SES Verification Email Send Error:', redactSensitiveData({
-      message: error.message,
-      name: error.name,
-      code: error.code,
-      requestId: error.$metadata?.requestId,
-      stack: error.stack
-    }));
+    safeLog(`Error loading email translation for ${language}:`, error, 'error');
+    // Fallback to English if translation loading fails
+    return loadEmailTranslations('en');
+  }
+};
 
+// Utility function to extract language
+const extractLanguage = (req) => {
+  // Check various possible sources of language information
+  const language = 
+    req.body.language ||  // Explicitly passed language
+    req.headers['accept-language'] ||  // HTTP Accept-Language header
+    req.headers['x-language'] ||  // Custom header
+    'en';  // Default to English
+
+  // Normalize language code
+  const normalizedLanguage = language.split('-')[0].toLowerCase();
+  
+  // Validate against supported languages
+  const supportedLanguages = ['en', 'pt', 'es'];
+  return supportedLanguages.includes(normalizedLanguage) ? normalizedLanguage : 'en';
+};
+
+// Send verification email using AWS SES with localization support
+const sendVerificationEmail = async (email, verificationToken, language = 'en') => {
+  // Normalize language code (in case of full locale codes like en-US)
+  const normalizedLanguage = language.split('-')[0].toLowerCase();
+  
+  // Load translations
+  const template = loadEmailTranslations(normalizedLanguage);
+  const verificationLink = `${process.env.REACT_APP_FRONTEND_URL}/verify-email?token=${verificationToken}`;
+
+  const params = {
+    Destination: {
+      ToAddresses: [email]
+    },
+    Message: {
+      Body: {
+        Html: {
+          Data: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+              <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <h2 style="color: #333; text-align: center; margin-bottom: 20px;">${template.subject}</h2>
+                
+                <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+                  ${template.body.split('{{verificationLink}}')[0]}
+                </p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="${verificationLink}" style="
+                    display: inline-block; 
+                    padding: 12px 24px; 
+                    background-color: #4CAF50; 
+                    color: white; 
+                    text-decoration: none; 
+                    border-radius: 5px; 
+                    font-weight: bold;
+                    text-transform: uppercase;
+                    transition: background-color 0.3s ease;
+                  " target="_blank">
+                    Verify Email
+                  </a>
+                </div>
+                
+                <p style="color: #666; line-height: 1.6; margin-top: 20px;">
+                  ${template.body.split('{{verificationLink}}')[1]}
+                </p>
+                
+                <p style="color: #999; font-size: 12px; text-align: center; margin-top: 20px;">
+                  If you did not create an account, please ignore this email.
+                </p>
+              </div>
+            </div>
+          `
+        },
+        Text: { 
+          Data: template.body.replace('{{verificationLink}}', verificationLink)
+        }
+      },
+      Subject: { 
+        Data: template.subject 
+      }
+    },
+    Source: process.env.AWS_SES_FROM_EMAIL || 'noreply@offshoresync.com'
+  };
+
+  try {
+    const command = new SendEmailCommand(params);
+    await sesClient.send(command);
+    safeLog(`Verification email sent to ${email} in ${normalizedLanguage} language`);
+  } catch (error) {
+    safeLog(`Error sending verification email to ${email}: ${error.message}`, 'error');
     throw error;
   }
 };
@@ -267,7 +371,9 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       
       // Send verification email
       try {
-        await sendVerificationEmail(email, verificationToken);
+        // Use the new extractLanguage function to get the correct language
+        const language = extractLanguage(req);
+        await sendVerificationEmail(email, verificationToken, language);
       } catch (emailError) {
         safeLog('Verification email send failed:', redactSensitiveData(emailError));
         
@@ -292,8 +398,8 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       isGoogleUser: googleLogin || false,
       profilePicture: googleLogin ? undefined : null, // Set profilePicture to null for non-Google users
       isVerified: googleLogin || false,
-      verificationToken,
-      verificationTokenExpires
+      verificationToken: googleLogin ? null : verificationToken,
+      verificationTokenExpires: googleLogin ? null : verificationTokenExpires,
     });
 
     // Hash password
