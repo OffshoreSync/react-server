@@ -126,7 +126,7 @@ Por favor, verifique su correo electrónico haciendo clic en el enlace a continu
 Si no creó esta cuenta, ignore este correo electrónico.
 
 Saludos cordiales,
-Equipo de OffshoreSync`
+Equipe de OffshoreSync`
       }
     };
 
@@ -513,20 +513,25 @@ router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
     safeLog('Current time', new Date().toISOString());
     safeLog('Token expiration', user ? 'Token has expiration' : 'No expiration');
 
-    if (!user) {
-      // Check if user exists but is already verified
-      const existingUser = await User.findOne({ 
-        verificationToken: token 
-      });
+    // Check for existing user even if current query didn't find a user
+    const existingUser = await User.findOne({ 
+      verificationToken: token 
+    });
 
-      if (existingUser && existingUser.isVerified) {
+    // If no user found in current query, check existing user
+    if (!user && existingUser) {
+      // If user already verified, return success
+      if (existingUser.isVerified) {
         safeLog(`User ${existingUser.email} is already verified`);
         return res.status(200).json({ 
           message: req.t ? req.t('verifyEmail.success.message') : 'Email is already verified. You can now log in.',
           alreadyVerified: true
         });
       }
+    }
 
+    // If no user found at all
+    if (!user && !existingUser) {
       safeLog('Invalid or expired verification token');
       return res.status(400).json({ 
         message: 'Invalid or expired verification token',
@@ -534,14 +539,27 @@ router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
       });
     }
 
+    // Use existing user if current query user is null
+    const userToVerify = user || existingUser;
+
+    // Prevent multiple verification attempts
+    if (userToVerify.isVerificationProcessed) {
+      safeLog(`Verification already processed for user ${userToVerify.email}`);
+      return res.status(200).json({ 
+        message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
+        verified: true
+      });
+    }
+
     // Mark user as verified 
-    user.isVerified = true;
-    user.verificationToken = undefined; // Clear the verification token
-    user.verificationTokenExpires = undefined; // Clear token expiration
+    userToVerify.isVerified = true;
+    userToVerify.isVerificationProcessed = true; // Add one-time flag
+    userToVerify.verificationToken = undefined; // Clear the verification token
+    userToVerify.verificationTokenExpires = undefined; // Clear token expiration
 
-    await user.save();
+    await userToVerify.save();
 
-    safeLog(`User ${user.email} verified successfully`);
+    safeLog(`User ${userToVerify.email} verified successfully`);
 
     res.status(200).json({ 
       message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
