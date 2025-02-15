@@ -9,15 +9,22 @@ const isProduction = process.env.NODE_ENV === 'production';
  */
 function safeLog(message, data, level = 'log') {
   if (!isProduction) {
+    // Check if data is undefined or null
+    const logData = data === undefined || data === null 
+      ? '' 
+      : typeof data === 'object' 
+        ? redactSensitiveData(data) 
+        : data;
+
     switch (level) {
       case 'log':
-        console.log(message, data);
+        console.log(message, logData);
         break;
       case 'warn':
-        console.warn(message, data);
+        console.warn(message, logData);
         break;
       case 'error':
-        console.error(message, data);
+        console.error(message, logData);
         break;
     }
   }
