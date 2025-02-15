@@ -1,0 +1,5 @@
+{
+  "subject": "Solicitud de Restablecimiento de Contraseña",
+  "body": "Ha solicitado restablecer la contraseña de su cuenta de OffshoreSync. Haga clic en el botón de abajo para crear una nueva contraseña:\n\n{{verificationLink}}\n\nSi no solicitó este restablecimiento de contraseña, ignore este correo electrónico o comuníquese con nuestro equipo de soporte.",
+  "buttonText": "Restablecer Contraseña"
+}

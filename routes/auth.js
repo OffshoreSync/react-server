@@ -11,6 +11,7 @@ const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const rateLimit = require('express-rate-limit');
 const { safeLog, redactSensitiveData } = require('../utils/logger');
 const fs = require('fs');
+const { sendPasswordResetEmail } = require('./passwordReset');
 
 // Initialize SES client
 const sesClient = new SESClient({
@@ -1673,6 +1674,60 @@ router.get('/search-users', async (req, res) => {
   } catch (error) {
     safeLog('Search users error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error searching users' });
+  }
+});
+
+// Password reset request route
+router.post('/password/request-reset', async (req, res) => {
+  try {
+    const { email, language } = req.body;
+
+    // Validate email
+    if (!validateEmail(email)) {
+      return res.status(400).json({ message: 'Invalid email format' });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      // For security, return generic message
+      return res.status(200).json({ 
+        message: 'If an account exists with this email, a reset link will be sent' 
+      });
+    }
+
+    // Generate password reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour
+
+    // Update user with reset token
+    user.passwordResetToken = resetToken;
+    user.passwordResetTokenExpires = resetTokenExpires;
+    await user.save();
+
+    // Send password reset email
+    try {
+      await sendPasswordResetEmail(
+        email, 
+        resetToken, 
+        language || 'en'
+      );
+    } catch (emailError) {
+      safeLog('Password reset email failed:', redactSensitiveData(emailError), 'error');
+      return res.status(500).json({ 
+        message: 'Failed to send password reset email' 
+      });
+    }
+
+    // Success response
+    res.status(200).json({ 
+      message: 'Password reset link sent successfully' 
+    });
+  } catch (error) {
+    safeLog('Password reset request error:', redactSensitiveData(error), 'error');
+    res.status(500).json({ 
+      message: 'Server error during password reset request' 
+    });
   }
 });
 

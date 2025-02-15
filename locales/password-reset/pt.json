@@ -1,0 +1,5 @@
+{
+  "subject": "Solicitação de Redefinição de Senha",
+  "body": "Você solicitou a redefinição de senha para sua conta do OffshoreSync. Clique no botão abaixo para criar uma nova senha:\n\n{{verificationLink}}\n\nSe você não solicitou esta redefinição de senha, ignore este e-mail ou entre em contato com nossa equipe de suporte.",
+  "buttonText": "Redefinir Senha"
+}

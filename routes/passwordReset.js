@@ -8,6 +8,8 @@ const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit'); // New import
 const { body, validationResult } = require('express-validator'); // New import
 const { safeLog, redactSensitiveData } = require('../utils/logger');
+const fs = require('fs');
+const path = require('path');
 
 // Validate AWS SES Configuration
 const validateSESConfig = () => {
@@ -41,77 +43,87 @@ const sesClient = new SESClient({
   }
 });
 
-// Send email using AWS SES with comprehensive error handling
-const sendPasswordResetEmail = async (email, resetLink) => {
-  // Validate input
-  if (!email || !resetLink) {
-    throw new Error('Email and reset link are required');
-  }
-
-  const params = {
-    Source: process.env.AWS_SES_FROM_EMAIL,
-    Destination: {
-      ToAddresses: [email]
-    },
-    Message: {
-      Subject: {
-        Data: 'Password Reset Request for OffshoreSync'
-      },
-      Body: {
-        Html: {
-          Data: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2>Password Reset Request</h2>
-              <p>You have requested to reset your password for OffshoreSync.</p>
-              <p>Click the link below to reset your password:</p>
-              <a href="${resetLink}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">
-                Reset Password
-              </a>
-              <p>If you did not request this reset, please ignore this email or contact support.</p>
-              <p>This link will expire in 1 hour.</p>
-            </div>
-          `
-        },
-        Text: {
-          Data: `Password Reset Link: ${resetLink}\n\nThis link will expire in 1 hour.`
-        }
-      }
-    }
-  };
-
+// Send password reset email using AWS SES with localization support
+const sendPasswordResetEmail = async (email, resetToken, language = 'en') => {
   try {
-    const command = new SendEmailCommand(params);
-    const response = await sesClient.send(command);
+    // Load email template for the specified language
+    const templatePath = path.join(
+      __dirname, 
+      `../locales/password-reset/${language}.json`
+    );
     
-    safeLog('Email sending response:', redactSensitiveData({
-      messageId: response.$metadata.requestId,
-      httpStatusCode: response.$metadata.httpStatusCode
-    }));
+    // Fallback to English if translation not found
+    const templateExists = fs.existsSync(templatePath);
+    const templateFile = templateExists 
+      ? templatePath 
+      : path.join(__dirname, '../locales/password-reset/en.json');
+    
+    const template = JSON.parse(fs.readFileSync(templateFile, 'utf8'));
+    
+    // Construct verification link
+    const resetLink = `${process.env.REACT_APP_FRONTEND_URL}/reset-password?token=${resetToken}`;
 
-    return response;
+    // Prepare email parameters
+    const params = {
+      Destination: {
+        ToAddresses: [email]
+      },
+      Message: {
+        Body: {
+          Html: {
+            Data: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+                <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                  <h2 style="color: #333; text-align: center; margin-bottom: 20px;">${template.subject}</h2>
+                  
+                  <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+                    ${template.body.split('{{verificationLink}}')[0]}
+                  </p>
+                  
+                  <div style="text-align: center; margin: 20px 0;">
+                    <a href="${resetLink}" style="
+                      display: inline-block; 
+                      padding: 12px 24px; 
+                      background-color: #4CAF50; 
+                      color: white; 
+                      text-decoration: none; 
+                      border-radius: 5px; 
+                      font-weight: bold;
+                      text-transform: uppercase;
+                      transition: background-color 0.3s ease;
+                    " target="_blank">
+                      ${template.buttonText}
+                    </a>
+                  </div>
+                  
+                  <p style="color: #666; line-height: 1.6; margin-top: 20px;">
+                    ${template.body.split('{{verificationLink}}')[1]}
+                  </p>
+                  
+                  <p style="color: #999; font-size: 12px; text-align: center; margin-top: 20px;">
+                    If you did not request this password reset, please ignore this email.
+                  </p>
+                </div>
+              </div>
+            `
+          },
+          Text: { 
+            Data: template.body.replace('{{verificationLink}}', resetLink)
+          }
+        },
+        Subject: { 
+          Data: template.subject 
+        }
+      },
+      Source: process.env.AWS_SES_FROM_EMAIL || 'noreply@offshoresync.com'
+    };
+
+    // Send email via AWS SES
+    const command = new SendEmailCommand(params);
+    await sesClient.send(command);
   } catch (error) {
-    // Comprehensive error logging
-    safeLog('Detailed SES Email Send Error:', redactSensitiveData({
-      message: error.message,
-      name: error.name,
-      code: error.code,
-    }));
-
-    // Specific error handling
-    if (error.name === 'MessageRejected') {
-      throw new Error(`Email sending failed. Possible reasons:
-        1. Email address may be invalid
-        2. Sender email not properly configured
-        3. AWS SES sending limits exceeded`);
-    }
-    if (error.name === 'ConfigurationSetDoesNotExist') {
-      throw new Error('AWS SES configuration error. Please check your SES setup.');
-    }
-    if (error.code === 'AccessDeniedException') {
-      throw new Error('AWS credentials do not have permission to send emails.');
-    }
-
-    throw new Error(`Failed to send password reset email: ${error.message}`);
+    safeLog('Password reset email send failed:', redactSensitiveData(error), 'error');
+    throw error;
   }
 };
 
@@ -142,7 +154,7 @@ router.post('/request-reset',
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { email } = req.body;
+    const { email, language = 'en' } = req.body;
 
     try {
       // Additional bot protection: Check recent reset attempts
@@ -180,18 +192,28 @@ router.post('/request-reset',
         expiresAt: new Date(Date.now() + parseInt(process.env.PASSWORD_RESET_EXPIRY))
       });
 
-      // Construct reset link
-      const resetLink = `${process.env.REACT_APP_FRONTEND_URL}/reset-password/${resetToken}`;
+      // Send email using AWS SES with specified language
+      try {
+        await sendPasswordResetEmail(
+          email, 
+          resetToken, 
+          language // Use the language passed from the client
+        );
+      } catch (emailError) {
+        safeLog('Password reset email failed:', redactSensitiveData(emailError), 'error');
+        return res.status(500).json({ 
+          message: 'Failed to send password reset email' 
+        });
+      }
 
-      // Send email using AWS SES
-      await sendPasswordResetEmail(email, resetLink);
-
-      res.status(200).json({ message: 'Password reset link sent successfully' });
+      // Success response
+      res.status(200).json({ 
+        message: 'Password reset link sent successfully' 
+      });
     } catch (error) {
-      safeLog('Password reset request error:', redactSensitiveData(error));
+      safeLog('Password reset request error:', redactSensitiveData(error), 'error');
       res.status(500).json({ 
-        message: error.message || 'Failed to process password reset request',
-        details: error.toString()
+        message: 'Server error during password reset request' 
       });
     }
   }
