@@ -697,23 +697,24 @@ const mapCountryToCode = (countryName) => {
 // Google Login/Registration
 router.post('/google-login', validateGoogleToken, async (req, res) => {
   try {
-    // Add comprehensive logging
+    // Comprehensive logging of incoming request
     safeLog('Google Login Attempt', {
       email: req.googleUser?.email,
       name: req.googleUser?.name,
-      googleId: req.googleUser?.googleId
+      googleId: req.googleUser?.googleId,
+      requestBody: req.body
     });
+
+    // Validate required fields
+    if (!req.googleUser || !req.googleUser.email) {
+      return res.status(400).json({ 
+        message: 'Invalid Google authentication',
+        error: 'Missing required user information'
+      });
+    }
 
     // Destructure validated Google user info
     const { email, name, picture, googleId, country } = req.googleUser;
-
-    // Explicit error handling for missing required fields
-    if (!email) {
-      return res.status(400).json({ 
-        message: 'Email is required for Google login',
-        error: 'Missing email from Google profile'
-      });
-    }
 
     // Map country name to country code
     const countryCode = mapCountryToCode(country);
@@ -762,18 +763,27 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    // Comprehensive user response
+    const userResponse = {
+      _id: user._id,
+      email: user.email,
+      fullName: user.fullName,
+      username: user.username,
+      profilePicture: user.profilePicture,
+      country: user.country,
+      isGoogleUser: true
+    };
+
+    // Log successful login
+    safeLog('Google Login Successful', {
+      userId: user._id,
+      email: user.email
+    });
+
     // Respond with user and token
     res.status(200).json({
       token,
-      user: {
-        _id: user._id,
-        email: user.email,
-        fullName: user.fullName,
-        username: user.username,
-        profilePicture: user.profilePicture,
-        country: user.country,
-        isGoogleUser: true
-      }
+      user: userResponse
     });
   } catch (error) {
     // Comprehensive error logging
