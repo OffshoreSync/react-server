@@ -72,18 +72,17 @@ const csrfProtection = (req, res, next) => {
   next();
 };
 
-// Middleware
+// CORS Configuration
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
     const allowedOrigins = [
-      'http://localhost:3000', 
+      'http://localhost:3000',
+      'https://localhost:3000',
       process.env.REACT_APP_FRONTEND_URL
     ];
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -94,18 +93,22 @@ app.use(cors({
   allowedHeaders: [
     'Content-Type', 
     'Authorization', 
-    'X-Requested-With', 
-    'X-XSRF-TOKEN',  // Explicitly allow CSRF token header
-    'Accept'
+    'X-Requested-With',
+    'x-xsrf-token',
+    'X-CSRF-Token',
+    'Accept',
+    'Access-Control-Allow-Credentials',  
+    'Access-Control-Allow-Origin'        
   ],
-  exposedHeaders: ['X-XSRF-TOKEN']  // Expose CSRF token header to client
+  exposedHeaders: [
+    'x-xsrf-token',
+    'Access-Control-Allow-Origin',       
+    'Access-Control-Allow-Credentials'   
+  ]
 }));
 
 app.use(cookieParser());  // Add cookie-parser middleware
 app.use(express.json());
-
-// Handle preflight requests
-app.options('*', cors());  // Enable preflight requests for all routes
 
 app.use(csrfProtection);
 

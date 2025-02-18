@@ -697,21 +697,26 @@ const mapCountryToCode = (countryName) => {
 // Google Login/Registration
 router.post('/google-login', validateGoogleToken, async (req, res) => {
   try {
-    // Use validated Google user info from middleware
+    // Add comprehensive logging
+    safeLog('Google Login Attempt', {
+      email: req.googleUser?.email,
+      name: req.googleUser?.name,
+      googleId: req.googleUser?.googleId
+    });
+
+    // Destructure validated Google user info
     const { email, name, picture, googleId, country } = req.googleUser;
+
+    // Explicit error handling for missing required fields
+    if (!email) {
+      return res.status(400).json({ 
+        message: 'Email is required for Google login',
+        error: 'Missing email from Google profile'
+      });
+    }
 
     // Map country name to country code
     const countryCode = mapCountryToCode(country);
-
-    // Log incoming profile details
-    safeLog('Incoming Google Profile:', redactSensitiveData({
-      email,
-      name,
-      picture,
-      googleId,
-      country,
-      mappedCountryCode: countryCode
-    }));
 
     // Check if user already exists
     let user = await User.findOne({ email });
@@ -724,11 +729,9 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
         username: email.split('@')[0],
         isGoogleUser: true,
         googleId,
-        profilePicture: picture, // Explicitly set profile picture
-        // Use mapped country code
+        profilePicture: picture,
         country: countryCode,
-        // Default values for required fields
-        offshoreRole: 'Support', // Default role
+        offshoreRole: 'Support',
         workingRegime: {
           onDutyDays: 28,
           offDutyDays: 28
@@ -736,13 +739,9 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       });
 
       await user.save();
-      safeLog('New user created with details:', redactSensitiveData({
-        profilePicture: user.profilePicture,
-        country: user.country
-      }));
     } else {
-      // Update existing user's profile picture and country
-      user.profilePicture = picture;
+      // Update existing user's profile
+      user.profilePicture = picture || user.profilePicture;
       
       // Only update country if it's not already set
       if (!user.country || user.country === 'Unknown') {
@@ -750,52 +749,42 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       }
 
       await user.save();
-      safeLog('Existing user updated with details:', redactSensitiveData({
-        profilePicture: user.profilePicture,
-        country: user.country
-      }));
     }
 
     // Generate JWT token
     const token = jwt.sign(
       { 
         userId: user._id, 
-        username: user.username,
-        isGoogleUser: true
+        email: user.email,
+        isGoogleUser: true 
       }, 
       process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
 
-    // Return user info and token (excluding password)
-    const userResponse = {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
-      offshoreRole: user.offshoreRole,
-      workingRegime: user.workingRegime,
-      isGoogleUser: user.isGoogleUser || true, // Ensure this is always set for Google logins
-      profilePicture: user.profilePicture, // Explicitly return profile picture
-      country: user.country || 'US', // Ensure country is always returned
-      company: user.company || null,
-      unitName: user.unitName || null
-    };
-
-    // Additional logging
-    safeLog('User Response:', redactSensitiveData({
-      profilePicture: userResponse.profilePicture,
-      country: userResponse.country
-    }));
-
-    res.status(200).json({ 
-      user: userResponse, 
-      token 
+    // Respond with user and token
+    res.status(200).json({
+      token,
+      user: {
+        _id: user._id,
+        email: user.email,
+        fullName: user.fullName,
+        username: user.username,
+        profilePicture: user.profilePicture,
+        country: user.country,
+        isGoogleUser: true
+      }
     });
   } catch (error) {
-    safeLog('Google Login Error:', redactSensitiveData(error), 'error');
+    // Comprehensive error logging
+    safeLog('Google Login Server Error', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+
     res.status(500).json({ 
-      message: 'Internal server error during Google login',
+      message: 'Server error during Google login',
       error: error.message 
     });
   }
