@@ -666,8 +666,11 @@ router.post('/login', async (req, res) => {
         username: user.username,
         email: user.email,
         fullName: user.fullName,
-        offshoreRole: user.offshoreRole,
-        workingRegime: user.workingRegime,
+        offshoreRole: user.offshoreRole || 'Support', // Default role
+        workingRegime: user.workingRegime || {
+          onDutyDays: 28,
+          offDutyDays: 28
+        },
         isGoogleUser: user.isGoogleUser,
         company: user.company || null,
         workSchedule: user.workSchedule || {},
@@ -771,15 +774,25 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       username: user.username,
       profilePicture: user.profilePicture,
       country: user.country,
-      isGoogleUser: true
+      isGoogleUser: true,
+      offshoreRole: user.offshoreRole || 'Support', // Default role
+      workingRegime: user.workingRegime ? {
+        onDutyDays: user.workingRegime.onDutyDays || 28,
+        offDutyDays: user.workingRegime.offDutyDays || 28
+      } : {
+        onDutyDays: 28,
+        offDutyDays: 28
+      }
     };
 
-    // Log successful login
+    // Log successful login safely
     safeLog('Google Login Successful', {
       userId: user._id,
-      email: user.email
+      email: user.email,
+      offshoreRole: userResponse.offshoreRole,
+      workingRegimeOnDutyDays: userResponse.workingRegime.onDutyDays,
+      workingRegimeOffDutyDays: userResponse.workingRegime.offDutyDays
     });
-
     // Respond with user and token
     res.status(200).json({
       token,
