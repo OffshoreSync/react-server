@@ -489,87 +489,46 @@ const emailVerificationLimiter = rateLimit({
 });
 
 // Email verification route
-router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
+router.post('/verify-email', emailVerificationLimiter, async (req, res) => {
   try {
-    const { token } = req.query;
-
-    safeLog('Received verification token', token ? 'Token present' : 'No token');
-
+    const { token } = req.body;
+    
     if (!token) {
-      safeLog('No verification token provided');
       return res.status(400).json({ 
-        message: 'No verification token provided',
-        error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
+        message: 'Verification token is required' 
       });
     }
 
-    // Find user with this token that hasn't expired
     const user = await User.findOne({
       verificationToken: token,
-      verificationTokenExpires: { $gt: new Date() }
+      verificationTokenExpires: { $gt: Date.now() }
     });
 
-    safeLog('User found during verification', user ? 'User exists' : 'No user found');
-    safeLog('Current time', new Date().toISOString());
-    safeLog('Token expiration', user ? 'Token has expiration' : 'No expiration');
-
-    // Check for existing user even if current query didn't find a user
-    const existingUser = await User.findOne({ 
-      verificationToken: token 
-    });
-
-    // If no user found in current query, check existing user
-    if (!user && existingUser) {
-      // If user already verified, return success
-      if (existingUser.isVerified) {
-        safeLog(`User ${existingUser.email} is already verified`);
-        return res.status(200).json({ 
-          message: req.t ? req.t('verifyEmail.success.message') : 'Email is already verified. You can now log in.',
-          alreadyVerified: true
-        });
-      }
-    }
-
-    // If no user found at all
-    if (!user && !existingUser) {
-      safeLog('Invalid or expired verification token');
+    if (!user) {
       return res.status(400).json({ 
-        message: 'Invalid or expired verification token',
-        error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
+        message: 'Invalid or expired verification token' 
       });
     }
 
-    // Use existing user if current query user is null
-    const userToVerify = user || existingUser;
-
-    // Prevent multiple verification attempts
-    if (userToVerify.isVerificationProcessed) {
-      safeLog(`Verification already processed for user ${userToVerify.email}`);
-      return res.status(200).json({ 
-        message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
-        verified: true
+    if (user.isVerified) {
+      return res.status(400).json({ 
+        message: 'Email is already verified' 
       });
     }
 
-    // Mark user as verified 
-    userToVerify.isVerified = true;
-    userToVerify.isVerificationProcessed = true; // Add one-time flag
-    userToVerify.verificationToken = undefined; // Clear the verification token
-    userToVerify.verificationTokenExpires = undefined; // Clear token expiration
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    user.verificationTokenExpires = undefined;
+    await user.save();
 
-    await userToVerify.save();
-
-    safeLog(`User ${userToVerify.email} verified successfully`);
-
-    res.status(200).json({ 
-      message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
-      verified: true
+    res.json({ 
+      success: true,
+      message: 'Email verified successfully' 
     });
   } catch (error) {
-    safeLog('Email verification error:', redactSensitiveData(error), 'error');
+    safeLog('Email verification error:', error, 'error');
     res.status(500).json({ 
-      message: 'Server error during email verification',
-      error: error.message
+      message: 'Server error during email verification' 
     });
   }
 });
@@ -1593,7 +1552,8 @@ router.get('/friends', async (req, res) => {
       const friendDetails = isFriendInitiator ? friendship.friend : friendship.user;
       
       return {
-        id: friendDetails._id,
+        _id: friendDetails._id, // Include both _id and id for compatibility
+        id: friendDetails._id,  // Include both _id and id for compatibility
         fullName: friendDetails.fullName,
         email: friendDetails.email,
         profilePicture: friendDetails.profilePicture,
@@ -1728,11 +1688,11 @@ router.post('/password/request-reset', async (req, res) => {
 
     // Generate password reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour
+    const resetTokenExpiry = Date.now() + 3600000; // 1 hour
 
     // Update user with reset token
     user.passwordResetToken = resetToken;
-    user.passwordResetTokenExpires = resetTokenExpires;
+    user.passwordResetTokenExpires = resetTokenExpiry;
     await user.save();
 
     // Send password reset email

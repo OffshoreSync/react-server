@@ -2,11 +2,11 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const PasswordReset = require('../models/PasswordReset');
-const PasswordResetAttempt = require('../models/PasswordResetAttempt'); // New import
+const PasswordResetAttempt = require('../models/PasswordResetAttempt'); 
 const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const bcrypt = require('bcryptjs');
-const rateLimit = require('express-rate-limit'); // New import
-const { body, validationResult } = require('express-validator'); // New import
+const rateLimit = require('express-rate-limit'); 
+const { body, validationResult } = require('express-validator'); 
 const { safeLog, redactSensitiveData } = require('../utils/logger');
 const fs = require('fs');
 const path = require('path');
@@ -138,86 +138,77 @@ const passwordResetLimiter = rateLimit({
 
 // Middleware for password reset request validation
 const validatePasswordResetRequest = [
-  body('email').isEmail().withMessage('Invalid email format'),
-  body('email').normalizeEmail(),
-  // Optional: Add more validation like checking email domain, etc.
+  body('email').isEmail().withMessage('Please provide a valid email address')
 ];
 
-// Request password reset route
-router.post('/request-reset', 
-  passwordResetLimiter,  // Add rate limiting
-  validatePasswordResetRequest,  // Add input validation
-  async (req, res) => {
+// Request password reset
+router.post('/request', passwordResetLimiter, validatePasswordResetRequest, async (req, res) => {
+  try {
     // Validate request
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { email, language = 'en' } = req.body;
+    const { email } = req.body;
+    const user = await User.findOne({ email });
 
-    try {
-      // Additional bot protection: Check recent reset attempts
-      const recentAttempts = await PasswordResetAttempt.countDocuments({
-        email,
-        createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
-      });
-
-      if (recentAttempts > 2) {
-        return res.status(429).json({ 
-          message: 'Too many reset attempts for this email. Please contact support.' 
-        });
-      }
-
-      // Existing user lookup and reset logic...
-      const user = await User.findOne({ email });
-      if (!user) {
-        return res.status(404).json({ message: 'No account found with this email' });
-      }
-
-      // Log the reset attempt
-      await PasswordResetAttempt.create({ 
-        email, 
-        ipAddress: req.ip 
-      });
-
-      // Generate reset token
-      const resetToken = PasswordReset.generateResetToken();
-      const hashedToken = PasswordReset.hashToken(resetToken);
-
-      // Create password reset record
-      await PasswordReset.create({
-        user: user._id,
-        token: hashedToken,
-        expiresAt: new Date(Date.now() + parseInt(process.env.PASSWORD_RESET_EXPIRY))
-      });
-
-      // Send email using AWS SES with specified language
-      try {
-        await sendPasswordResetEmail(
-          email, 
-          resetToken, 
-          language // Use the language passed from the client
-        );
-      } catch (emailError) {
-        safeLog('Password reset email failed:', redactSensitiveData(emailError), 'error');
-        return res.status(500).json({ 
-          message: 'Failed to send password reset email' 
-        });
-      }
-
-      // Success response
-      res.status(200).json({ 
-        message: 'Password reset link sent successfully' 
-      });
-    } catch (error) {
-      safeLog('Password reset request error:', redactSensitiveData(error), 'error');
-      res.status(500).json({ 
-        message: 'Server error during password reset request' 
+    // Don't reveal whether a user was found or not
+    if (!user) {
+      return res.status(200).json({
+        message: 'If an account exists with this email, you will receive a password reset link'
       });
     }
+
+    // Additional bot protection: Check recent reset attempts
+    const recentAttempts = await PasswordResetAttempt.countDocuments({
+      email,
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+    });
+
+    if (recentAttempts > 2) {
+      return res.status(429).json({ 
+        message: 'Too many reset attempts for this email. Please contact support.' 
+      });
+    }
+
+    // Generate reset token
+    const resetToken = PasswordReset.generateResetToken();
+    const hashedToken = PasswordReset.hashToken(resetToken);
+
+    // Create password reset record
+    await PasswordReset.create({
+      user: user._id,
+      token: hashedToken,
+      expiresAt: new Date(Date.now() + parseInt(process.env.PASSWORD_RESET_EXPIRY))
+    });
+
+    // Send reset email
+    try {
+      await sendPasswordResetEmail(email, resetToken);
+    } catch (emailError) {
+      safeLog('Password reset email failed:', redactSensitiveData(emailError), 'error');
+      return res.status(500).json({ 
+        message: 'Failed to send password reset email' 
+      });
+    }
+
+    // Log the reset attempt
+    await PasswordResetAttempt.create({ 
+      email, 
+      ipAddress: req.ip 
+    });
+
+    res.status(200).json({
+      message: 'If an account exists with this email, you will receive a password reset link'
+    });
+  } catch (error) {
+    safeLog('Password reset request error:', redactSensitiveData(error), 'error');
+    res.status(500).json({ 
+      message: 'Server error during password reset request' 
+    });
   }
-);
+});
 
 // Verify reset token
 router.post('/verify-token', async (req, res) => {
@@ -245,31 +236,22 @@ router.post('/verify-token', async (req, res) => {
 });
 
 // Reset password route with enhanced security
-router.post('/reset', async (req, res) => {
+router.post('/reset', [
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters long')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
+  body('token').notEmpty().withMessage('Reset token is required')
+], async (req, res) => {
   try {
-    const { token, newPassword, confirmPassword, email } = req.body;
-    const currentTime = Date.now();
-
-    // Validate input
-    if (!token || !newPassword || !confirmPassword || !email) {
-      return res.status(400).json({ 
-        message: 'Token, email, new password, and confirmation are required',
-        fields: {
-          token: !token,
-          newPassword: !newPassword,
-          confirmPassword: !confirmPassword,
-          email: !email
-        }
-      });
+    // Validate request
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
     }
 
-    // Check if passwords match
-    if (newPassword !== confirmPassword) {
-      return res.status(400).json({ 
-        message: 'Passwords do not match',
-        field: 'confirmPassword'
-      });
-    }
+    const { token, password, email } = req.body;
 
     // Rate limiting for reset attempts
     const resetKey = `${email}_${token}`;
@@ -278,8 +260,8 @@ router.post('/reset', async (req, res) => {
       const { attempts, lastAttempt, lockedUntil } = resetAttempts[resetKey];
       
       // Check if request is locked out
-      if (lockedUntil && currentTime < lockedUntil) {
-        const remainingLockTime = Math.ceil((lockedUntil - currentTime) / 1000 / 60);
+      if (lockedUntil && Date.now() < lockedUntil) {
+        const remainingLockTime = Math.ceil((lockedUntil - Date.now()) / 1000 / 60);
         return res.status(429).json({ 
           message: `Too many reset attempts. Locked for ${remainingLockTime} minutes.`
         });
@@ -289,28 +271,13 @@ router.post('/reset', async (req, res) => {
       if (attempts >= 3) {
         resetAttempts[resetKey] = {
           attempts: attempts + 1,
-          lastAttempt: currentTime,
-          lockedUntil: currentTime + 24 * 60 * 60 * 1000
+          lastAttempt: Date.now(),
+          lockedUntil: Date.now() + 24 * 60 * 60 * 1000
         };
         return res.status(429).json({ 
           message: 'Too many reset attempts. Please try again later.'
         });
       }
-    }
-
-    // Validate password complexity
-    const complexityRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-    if (!complexityRegex.test(newPassword)) {
-      return res.status(400).json({ 
-        message: 'Password does not meet complexity requirements',
-        requirements: [
-          'Minimum 8 characters',
-          'At least one uppercase letter',
-          'At least one lowercase letter', 
-          'At least one number',
-          'At least one special character'
-        ]
-      });
     }
 
     // Verify reset token
@@ -332,7 +299,7 @@ router.post('/reset', async (req, res) => {
 
     // Hash the new password
     const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
     // Update user's password
     user.password = hashedPassword;

@@ -112,8 +112,18 @@ app.use(express.json());
 
 app.use(csrfProtection);
 
+// API routes
+const apiRouter = express.Router();
+app.use('/api', apiRouter);
+
+// Mount auth routes
+const authRoutes = require('./routes/auth');
+const passwordResetRoutes = require('./routes/passwordReset');
+apiRouter.use('/auth', authRoutes);
+apiRouter.use('/password', passwordResetRoutes);
+
 // CSRF token endpoint
-app.get('/api/csrf-token', (req, res) => {
+apiRouter.get('/csrf-token', (req, res) => {
   // Ensure CSRF token is set
   let csrfToken = req.cookies['XSRF-TOKEN'];
   
@@ -126,11 +136,14 @@ app.get('/api/csrf-token', (req, res) => {
     });
   }
 
-  safeLog('CSRF Token Endpoint - Token:', csrfToken);
-
   res.json({ 
     csrfToken: csrfToken 
   });
+});
+
+// Root route
+app.get('/', (req, res) => {
+  res.send('Welcome to the Offshore Sync Application');
 });
 
 // MongoDB Connection
@@ -142,18 +155,6 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app', {
 const connection = mongoose.connection;
 connection.once('open', () => {
   safeLog('MongoDB database connection established successfully');
-});
-
-// Routes
-const authRoutes = require('./routes/auth');
-const passwordResetRoutes = require('./routes/passwordReset');
-
-app.use('/api/auth', authRoutes);
-app.use('/api/password', passwordResetRoutes);
-
-// Root route
-app.get('/', (req, res) => {
-  res.send('Welcome to the Offshore Sync Application');
 });
 
 const PORT = process.env.PORT || 5000;
