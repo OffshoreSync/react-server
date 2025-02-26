@@ -505,14 +505,17 @@ const createUserResponse = (user) => ({
   timezone: user.timezone,
   isVerified: user.isVerified,
   nextOnboardDate: user.nextOnboardDate,
-  workCycles: user.workCycles,
+  workCycles: user.workCycles || [],
   profilePicture: user.profilePicture,
   isGoogleUser: user.isGoogleUser,
   offshoreRole: user.offshoreRole || 'Support',
+  company: user.company || null,
+  unitName: user.unitName || null,
   workingRegime: user.workingRegime || {
     onDutyDays: 28,
     offDutyDays: 28
-  }
+  },
+  workSchedule: user.workSchedule || {}
 });
 
 // Refresh token endpoint
