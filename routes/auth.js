@@ -497,7 +497,8 @@ const setAuthCookies = (res, { accessToken, refreshToken }) => {
 
 // Helper function to create user response object
 const createUserResponse = (user) => ({
-  _id: user._id,
+  id: user._id.toString(), // Use consistent id field
+  _id: user._id.toString(), // Keep _id for backward compatibility
   username: user.username,
   fullName: user.fullName,
   email: user.email,
