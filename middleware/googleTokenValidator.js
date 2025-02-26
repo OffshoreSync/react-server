@@ -5,15 +5,15 @@ const { safeLog, redactSensitiveData } = require('../utils/logger');
 const client = new OAuth2Client(process.env.REACT_APP_GOOGLE_CLIENT_ID);
 
 const validateGoogleToken = async (req, res, next) => {
-  const { googleToken } = req.body;
+  const { credential } = req.body;
 
-  if (!googleToken) {
-    return res.status(400).json({ message: 'No Google token provided' });
+  if (!credential) {
+    return res.status(400).json({ message: 'No Google credential provided' });
   }
 
   try {
     const ticket = await client.verifyIdToken({
-      idToken: googleToken,
+      idToken: credential,
       audience: process.env.REACT_APP_GOOGLE_CLIENT_ID
     });
 

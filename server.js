@@ -1,14 +1,36 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const morgan = require('morgan');
 const path = require('path');  // Add path module
 const crypto = require('crypto');
-const cookieParser = require('cookie-parser');  // Add this import
 const jwt = require('jsonwebtoken'); // Add jwt import
 require('dotenv').config();
 const { safeLog } = require('./utils/logger');
 
 const app = express();
+
+// Security middleware
+app.use(helmet({
+  crossOriginEmbedderPolicy: false, // Required for Google Sign-In
+  crossOriginOpenerPolicy: false, // Required for Google Sign-In popup
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'", process.env.REACT_APP_FRONTEND_URL],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://accounts.google.com", "https://apis.google.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      connectSrc: ["'self'", process.env.REACT_APP_FRONTEND_URL, process.env.REACT_APP_BACKEND_URL, "https://accounts.google.com"],
+      frameSrc: ["'self'", "https://accounts.google.com"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: []
+    }
+  }
+}));
 
 // CSRF Protection Middleware
 const generateCSRFToken = () => {
@@ -28,6 +50,7 @@ const csrfProtection = (req, res, next) => {
     '/api/csrf-token',
     '/api/auth/register',
     '/api/auth/login',
+    '/api/auth/refresh',
     '/api/password/request-reset',
     '/api/password/reset'
   ];
@@ -52,7 +75,7 @@ const csrfProtection = (req, res, next) => {
 
   // Validate CSRF for other routes
   const csrfCookie = req.cookies['XSRF-TOKEN'];
-  const csrfHeader = req.headers['x-xsrf-token'];
+  const csrfHeader = req.headers['x-csrf-token'] || req.headers['x-xsrf-token'];
 
   if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
     safeLog('CSRF Token Validation Failed', {
@@ -72,43 +95,34 @@ const csrfProtection = (req, res, next) => {
   next();
 };
 
-// CORS Configuration
+// CORS configuration
 app.use(cors({
-  origin: function(origin, callback) {
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'https://localhost:3000',
-      process.env.REACT_APP_FRONTEND_URL
-    ];
-    
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type', 
     'Authorization', 
+    'X-XSRF-TOKEN',
     'X-Requested-With',
-    'x-xsrf-token',
     'X-CSRF-Token',
     'Accept',
-    'Access-Control-Allow-Credentials',  
-    'Access-Control-Allow-Origin'        
+    'Origin',
+    'Cookie'
   ],
-  exposedHeaders: [
-    'x-xsrf-token',
-    'Access-Control-Allow-Origin',       
-    'Access-Control-Allow-Credentials'   
-  ]
+  exposedHeaders: ['X-CSRF-Token', 'Set-Cookie'],
+  maxAge: 600 // 10 minutes
 }));
 
-app.use(cookieParser());  // Add cookie-parser middleware
+// Cookie parser middleware
+app.use(cookieParser());
+
+// Body parser middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Logging middleware
+app.use(morgan('dev'));
 
 app.use(csrfProtection);
 
@@ -131,8 +145,9 @@ apiRouter.get('/csrf-token', (req, res) => {
     csrfToken = generateCSRFToken();
     res.cookie('XSRF-TOKEN', csrfToken, {
       httpOnly: false,
-      sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production'
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/'
     });
   }
 

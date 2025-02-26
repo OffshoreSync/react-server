@@ -4,12 +4,12 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const validateGoogleToken = require('../middleware/googleTokenValidator');
 const bcrypt = require('bcryptjs');
-const path = require('path');
-const { getCountryCode } = require('../utils/countries');
-const crypto = require('crypto');
-const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const rateLimit = require('express-rate-limit');
 const { safeLog, redactSensitiveData } = require('../utils/logger');
+const { getCountryCode } = require('../utils/countries');
+const crypto = require('crypto');
+const path = require('path');
+const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const fs = require('fs');
 const { sendPasswordResetEmail } = require('./passwordReset');
 
@@ -236,6 +236,325 @@ const sendVerificationEmail = async (email, verificationToken, language = 'en') 
   }
 };
 
+// Rate limiting for email verification
+const emailVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // Limit each IP to 3 email verification attempts per windowMs
+  message: {
+    error: 'Too many email verification attempts, please try again later',
+    translationKey: 'verifyEmail.error.tooManyAttempts'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+// Email verification route
+router.post('/verify-email', emailVerificationLimiter, async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ 
+        message: 'Verification token is required' 
+      });
+    }
+
+    const user = await User.findOne({
+      verificationToken: token,
+      verificationTokenExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        message: 'Invalid or expired verification token' 
+      });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ 
+        message: 'Email is already verified' 
+      });
+    }
+
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    user.verificationTokenExpires = undefined;
+    await user.save();
+
+    res.json({ 
+      success: true,
+      message: 'Email verified successfully' 
+    });
+  } catch (error) {
+    safeLog('Email verification error:', error, 'error');
+    res.status(500).json({ 
+      message: 'Server error during email verification' 
+    });
+  }
+});
+
+// Login user
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    safeLog(`Login attempt for username`, username ? 'Username provided' : 'No username');
+
+    // Find user by username
+    const user = await User.findOne({ username });
+
+    if (!user) {
+      safeLog(`Login failed: No user found with username ${username}`);
+      return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    // Detailed user information logging for diagnostics
+    safeLog(`User found: 
+      Username: ${user.username}
+      Is Google User: ${user.isGoogleUser}
+      Password Hash Length: ${user.password ? user.password.length : 'No password'}
+    `);
+
+    // Additional check for password existence
+    if (!user.password && !user.isGoogleUser) {
+      safeLog(`Login error: Non-Google user ${username} has no password`);
+      return res.status(400).json({ message: 'Account setup incomplete' });
+    }
+
+    // Check if user is not verified (for non-Google users)
+    if (!user.isGoogleUser && !user.isVerified) {
+      return res.status(403).json({ 
+        message: 'Please verify your email before logging in',
+        requiresVerification: true,
+        email: user.email
+      });
+    }
+
+    // Check password
+    let isMatch = false;
+    try {
+      // Use the new integrity verification method
+      const integrityResult = await user.verifyPasswordIntegrity(password);
+      safeLog('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
+      
+      // Determine match based on integrity check
+      isMatch = integrityResult.isMatch;
+      
+      // If no match, log additional details
+      if (!isMatch) {
+        safeLog(`Login failed for user ${username}. Detailed integrity check:`);
+        safeLog(`Stored Hash Length: ${integrityResult.storedHashLength}`);
+        safeLog(`New Hash Length: ${integrityResult.newHashLength}`);
+        safeLog(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
+        safeLog(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
+      }
+    } catch (compareError) {
+      safeLog(`Password comparison error for user ${username}:`, redactSensitiveData(compareError), 'error');
+      return res.status(500).json({ message: 'Internal server error during password verification' });
+    }
+
+    safeLog(`Password match result for ${username}: ${isMatch}`);
+
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    // Ensure profilePicture is null for non-Google users
+    if (!user.isGoogleUser && user.profilePicture !== null) {
+      safeLog(`Resetting profile picture for non-Google user ${username}`);
+      user.profilePicture = null;
+      await user.save();
+    }
+
+    // Generate tokens
+    const tokens = await generateTokens(user);
+    setAuthCookies(res, tokens);
+
+    // Explicitly include all fields in the response
+    res.json({
+      token: tokens.accessToken,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        offshoreRole: user.offshoreRole || 'Support', // Default role
+        workingRegime: user.workingRegime || {
+          onDutyDays: 28,
+          offDutyDays: 28
+        },
+        isGoogleUser: user.isGoogleUser,
+        company: user.company || null,
+        workSchedule: user.workSchedule || {},
+        
+        // Explicitly include these fields with null fallback
+        unitName: user.unitName || null,
+        country: user.country || null,
+        isGoogleUser: user.isGoogleUser,
+        nextOnBoardDate: user.nextOnBoardDate || null
+      }
+    });
+  } catch (error) {
+    safeLog('Login error for user:', req.body.username, 'error');
+    res.status(500).json({ 
+      message: 'Server error during login',
+      details: error.message 
+    });
+  }
+});
+
+// Rate limiting for token refresh
+const refreshTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
+// Helper function to generate tokens
+const generateTokens = async (user) => {
+  // Generate access token (2 hours)
+  const accessToken = jwt.sign(
+    { 
+      userId: user._id.toString(), // Ensure userId is a string
+      email: user.email,
+      username: user.username,
+      isGoogleUser: user.isGoogleUser,
+      fullName: user.fullName
+    }, 
+    process.env.JWT_SECRET, 
+    { expiresIn: '2h' }
+  );
+
+  // Generate refresh token (7 days)
+  const refreshToken = crypto.randomBytes(64).toString('hex');
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  // Add refresh token to user's tokens array
+  user.refreshTokens = user.refreshTokens || [];
+  
+  // Remove expired or revoked tokens first
+  user.refreshTokens = user.refreshTokens.filter(token => 
+    token.expiresAt > now && !token.isRevoked
+  );
+
+  // Add new refresh token
+  user.refreshTokens.push({
+    token: refreshToken,
+    expiresAt,
+    isRevoked: false
+  });
+
+  // Debug token generation
+  safeLog('Generated new tokens:', {
+    userId: user._id.toString(),
+    accessTokenLength: accessToken.length,
+    refreshTokenLength: refreshToken.length,
+    activeRefreshTokens: user.refreshTokens.length,
+    tokenPayload: jwt.decode(accessToken)
+  });
+
+  await user.save();
+
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt
+  };
+};
+
+// Helper function to set auth cookies
+const setAuthCookies = (res, { accessToken, refreshToken }) => {
+  // Debug cookie settings
+  safeLog('Setting auth cookies:', {
+    accessTokenLength: accessToken?.length,
+    refreshTokenLength: refreshToken?.length,
+    cookieSettings: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/'
+    }
+  });
+
+  // Set access token cookie (2 hours)
+  res.cookie('token', accessToken, {
+    httpOnly: false, // Allow JavaScript access for client-side auth
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 2 * 60 * 60 * 1000 // 2 hours
+  });
+
+  // Set refresh token cookie (7 days)
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true, // Keep refresh token secure
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',  // Changed to root path
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  });
+};
+
+// Helper function to create user response object
+const createUserResponse = (user) => ({
+  _id: user._id,
+  username: user.username,
+  fullName: user.fullName,
+  email: user.email,
+  country: user.country,
+  timezone: user.timezone,
+  isVerified: user.isVerified,
+  nextOnboardDate: user.nextOnboardDate,
+  workCycles: user.workCycles,
+  profilePicture: user.profilePicture,
+  isGoogleUser: user.isGoogleUser,
+  offshoreRole: user.offshoreRole || 'Support',
+  workingRegime: user.workingRegime || {
+    onDutyDays: 28,
+    offDutyDays: 28
+  }
+});
+
+// Refresh token endpoint
+router.post('/refresh', refreshTokenLimiter, async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'No refresh token provided' });
+    }
+
+    // Find user with this refresh token
+    const user = await User.findOne({
+      'refreshTokens.token': refreshToken,
+      'refreshTokens.isRevoked': false,
+      'refreshTokens.expiresAt': { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid or expired refresh token' });
+    }
+
+    // Revoke the used refresh token
+    const tokenIndex = user.refreshTokens.findIndex(t => t.token === refreshToken);
+    user.refreshTokens[tokenIndex].isRevoked = true;
+    await user.save(); // Save the user document after revoking token
+
+    // Generate new tokens
+    const tokens = await generateTokens(user);
+    setAuthCookies(res, tokens);
+
+    // Send user data in response
+    res.json({ 
+      message: 'Token refreshed successfully',
+      user: createUserResponse(user),
+      token: tokens.accessToken
+    });
+  } catch (error) {
+    safeLog('Token refresh error:', redactSensitiveData(error), 'error');
+    res.status(500).json({ message: 'Error refreshing token' });
+  }
+});
+
 // Register new user
 router.post('/register', blockDisposableEmails, async (req, res) => {
   try {
@@ -435,16 +754,9 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       });
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: newUser._id, 
-        username: newUser.username,
-        isGoogleUser: newUser.isGoogleUser
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
-    );
+    // Generate tokens
+    const tokens = await generateTokens(newUser);
+    setAuthCookies(res, tokens);
 
     // Return user info and token (excluding password)
     const userResponse = {
@@ -463,7 +775,7 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
 
     res.status(201).json({ 
       user: userResponse, 
-      token,
+      token: tokens.accessToken,
       requiresVerification: !googleLogin
     });
 
@@ -472,180 +784,6 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
     res.status(500).json({ 
       message: 'Server error during registration',
       error: error.message 
-    });
-  }
-});
-
-// Rate limiting for email verification
-const emailVerificationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 3, // Limit each IP to 3 email verification attempts per windowMs
-  message: {
-    error: 'Too many email verification attempts, please try again later',
-    translationKey: 'verifyEmail.error.tooManyAttempts'
-  },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
-
-// Email verification route
-router.post('/verify-email', emailVerificationLimiter, async (req, res) => {
-  try {
-    const { token } = req.body;
-    
-    if (!token) {
-      return res.status(400).json({ 
-        message: 'Verification token is required' 
-      });
-    }
-
-    const user = await User.findOne({
-      verificationToken: token,
-      verificationTokenExpires: { $gt: Date.now() }
-    });
-
-    if (!user) {
-      return res.status(400).json({ 
-        message: 'Invalid or expired verification token' 
-      });
-    }
-
-    if (user.isVerified) {
-      return res.status(400).json({ 
-        message: 'Email is already verified' 
-      });
-    }
-
-    user.isVerified = true;
-    user.verificationToken = undefined;
-    user.verificationTokenExpires = undefined;
-    await user.save();
-
-    res.json({ 
-      success: true,
-      message: 'Email verified successfully' 
-    });
-  } catch (error) {
-    safeLog('Email verification error:', error, 'error');
-    res.status(500).json({ 
-      message: 'Server error during email verification' 
-    });
-  }
-});
-
-// Login user
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    safeLog(`Login attempt for username`, username ? 'Username provided' : 'No username');
-
-    // Find user by username
-    const user = await User.findOne({ username });
-
-    if (!user) {
-      safeLog(`Login failed: No user found with username ${username}`);
-      return res.status(400).json({ message: 'Invalid username or password' });
-    }
-
-    // Detailed user information logging for diagnostics
-    safeLog(`User found: 
-      Username: ${user.username}
-      Is Google User: ${user.isGoogleUser}
-      Password Hash Length: ${user.password ? user.password.length : 'No password'}
-    `);
-
-    // Additional check for password existence
-    if (!user.password && !user.isGoogleUser) {
-      safeLog(`Login error: Non-Google user ${username} has no password`);
-      return res.status(400).json({ message: 'Account setup incomplete' });
-    }
-
-    // Check if user is not verified (for non-Google users)
-    if (!user.isGoogleUser && !user.isVerified) {
-      return res.status(403).json({ 
-        message: 'Please verify your email before logging in',
-        requiresVerification: true,
-        email: user.email
-      });
-    }
-
-    // Check password
-    let isMatch = false;
-    try {
-      // Use the new integrity verification method
-      const integrityResult = await user.verifyPasswordIntegrity(password);
-      safeLog('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
-      
-      // Determine match based on integrity check
-      isMatch = integrityResult.isMatch;
-      
-      // If no match, log additional details
-      if (!isMatch) {
-        safeLog(`Login failed for user ${username}. Detailed integrity check:`);
-        safeLog(`Stored Hash Length: ${integrityResult.storedHashLength}`);
-        safeLog(`New Hash Length: ${integrityResult.newHashLength}`);
-        safeLog(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
-        safeLog(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
-      }
-    } catch (compareError) {
-      safeLog(`Password comparison error for user ${username}:`, redactSensitiveData(compareError), 'error');
-      return res.status(500).json({ message: 'Internal server error during password verification' });
-    }
-
-    safeLog(`Password match result for ${username}: ${isMatch}`);
-
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid username or password' });
-    }
-
-    // Ensure profilePicture is null for non-Google users
-    if (!user.isGoogleUser && user.profilePicture !== null) {
-      safeLog(`Resetting profile picture for non-Google user ${username}`);
-      user.profilePicture = null;
-      await user.save();
-    }
-
-    // Generate token
-    const token = jwt.sign(
-      { 
-        userId: user._id, 
-        username: user.username,
-        isGoogleUser: user.isGoogleUser
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
-    );
-
-    // Explicitly include all fields in the response
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        offshoreRole: user.offshoreRole || 'Support', // Default role
-        workingRegime: user.workingRegime || {
-          onDutyDays: 28,
-          offDutyDays: 28
-        },
-        isGoogleUser: user.isGoogleUser,
-        company: user.company || null,
-        workSchedule: user.workSchedule || {},
-        
-        // Explicitly include these fields with null fallback
-        unitName: user.unitName || null,
-        country: user.country || null,
-        isGoogleUser: user.isGoogleUser,
-        nextOnBoardDate: user.nextOnBoardDate || null
-      }
-    });
-  } catch (error) {
-    safeLog('Login error for user:', req.body.username, 'error');
-    res.status(500).json({ 
-      message: 'Server error during login',
-      details: error.message 
     });
   }
 });
@@ -705,6 +843,8 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
     } else {
       // Update existing user's profile
       user.profilePicture = picture || user.profilePicture;
+      user.isGoogleUser = true;
+      user.googleId = googleId;
       
       // Only update country if it's not already set
       if (!user.country || user.country === 'Unknown') {
@@ -714,59 +854,38 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       await user.save();
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: user._id, 
-        email: user.email,
-        isGoogleUser: true 
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '24h' }
-    );
-
-    // Comprehensive user response
-    const userResponse = {
-      _id: user._id,
-      email: user.email,
-      fullName: user.fullName,
-      username: user.username,
-      profilePicture: user.profilePicture,
-      country: user.country,
-      isGoogleUser: true,
-      offshoreRole: user.offshoreRole || 'Support', // Default role
-      workingRegime: user.workingRegime ? {
-        onDutyDays: user.workingRegime.onDutyDays || 28,
-        offDutyDays: user.workingRegime.offDutyDays || 28
-      } : {
-        onDutyDays: 28,
-        offDutyDays: 28
-      }
-    };
-
-    // Log successful login safely
-    safeLog('Google Login Successful', {
-      userId: user._id,
-      email: user.email,
-      offshoreRole: userResponse.offshoreRole,
-      workingRegimeOnDutyDays: userResponse.workingRegime.onDutyDays,
-      workingRegimeOffDutyDays: userResponse.workingRegime.offDutyDays
+    // Generate tokens
+    const tokens = await generateTokens(user);
+    
+    // Store refresh token in user document
+    user.refreshTokens = user.refreshTokens || [];
+    user.refreshTokens.push({
+      token: tokens.refreshToken,
+      expiresAt: tokens.expiresAt,
+      isRevoked: false
     });
-    // Respond with user and token
-    res.status(200).json({
-      token,
-      user: userResponse
+    await user.save();
+
+    // Debug token generation
+    safeLog('Generated tokens for user:', {
+      userId: user._id,
+      accessTokenLength: tokens.accessToken.length,
+      refreshTokenLength: tokens.refreshToken.length
+    });
+
+    // Set cookies using helper function
+    setAuthCookies(res, tokens);
+
+    // Return success response with user data and token
+    res.json({ 
+      message: 'Google authentication successful',
+      user: createUserResponse(user),
+      token: tokens.accessToken
     });
   } catch (error) {
-    // Comprehensive error logging
-    safeLog('Google Login Server Error', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name
-    });
-
+    safeLog('Google login error:', error, 'error');
     res.status(500).json({ 
-      message: 'Server error during Google login',
+      message: 'Server error during Google authentication',
       error: error.message 
     });
   }
@@ -948,17 +1067,45 @@ router.put('/update-profile', async (req, res) => {
 router.get('/profile', async (req, res) => {
   try {
     // Get token from headers
-    const token = req.headers.authorization?.split(' ')[1];
+    const authHeader = req.headers.authorization;
+    
+    // Debug auth header
+    safeLog('Profile Request Auth:', {
+      hasAuthHeader: !!authHeader,
+      headerValue: authHeader ? `${authHeader.substring(0, 20)}...` : 'none'
+    });
 
-    if (!token) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ message: 'No token provided' });
     }
+
+    const token = authHeader.split(' ')[1];
+
+    // Debug raw token
+    safeLog('Raw token:', {
+      length: token?.length,
+      firstChars: token ? `${token.substring(0, 20)}...` : 'none'
+    });
 
     // Verify token
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      // Debug decoded token
+      safeLog('Decoded token:', {
+        userId: decoded.userId,
+        email: decoded.email,
+        isGoogleUser: decoded.isGoogleUser
+      });
     } catch (error) {
+      // Log the specific JWT error
+      safeLog('JWT Verification Error:', {
+        name: error.name,
+        message: error.message,
+        token: token ? `${token.substring(0, 20)}...` : 'none'
+      });
+
       if (error.name === 'TokenExpiredError') {
         return res.status(401).json({ 
           message: 'Token expired', 
@@ -966,7 +1113,11 @@ router.get('/profile', async (req, res) => {
           requiresReAuthentication: true 
         });
       }
-      throw error;
+
+      return res.status(401).json({ 
+        message: 'Invalid token',
+        error: error.name
+      });
     }
 
     // Find user
@@ -976,35 +1127,27 @@ router.get('/profile', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Log user details for debugging
-    safeLog('User Profile Details:', redactSensitiveData({
-      isGoogleUser: user.isGoogleUser,
-      profilePicture: user.profilePicture
-    }));
-
-    // Return user profile (excluding sensitive information)
-    res.json({ 
-      user: {
-        id: user._id,
-        username: user.username,
+    // Generate new token for the response
+    const newToken = jwt.sign(
+      { 
+        userId: user._id.toString(),
         email: user.email,
-        fullName: user.fullName,
-        offshoreRole: user.offshoreRole,
-        workingRegime: user.workingRegime || {
-          onDutyDays: 28,
-          offDutyDays: 28
-        },
-        company: user.company,
-        workSchedule: user.workSchedule,
-        unitName: user.unitName || null,
-        country: user.country || null,
+        username: user.username,
         isGoogleUser: user.isGoogleUser,
-        profilePicture: user.profilePicture || null // Explicitly include profilePicture
-      }
+        fullName: user.fullName
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '2h' }
+    );
+
+    // Return user profile with new token
+    res.json({ 
+      user: createUserResponse(user),
+      token: newToken
     });
   } catch (error) {
-    safeLog('Profile retrieval error:', redactSensitiveData(error), 'error');
-    res.status(500).json({ message: 'Server error during profile retrieval' });
+    safeLog('Profile fetch error:', error, 'error');
+    res.status(500).json({ message: 'Server error fetching profile' });
   }
 });
 
@@ -1704,8 +1847,10 @@ router.post('/password/request-reset', async (req, res) => {
       );
     } catch (emailError) {
       safeLog('Password reset email failed:', redactSensitiveData(emailError), 'error');
-      return res.status(500).json({ 
-        message: 'Failed to send password reset email' 
+      
+      return res.status(500).json({
+        message: 'Failed to send password reset email',
+        error: emailError.message
       });
     }
 

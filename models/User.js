@@ -17,6 +17,21 @@ const WorkingRegimeSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
+const RefreshTokenSchema = new mongoose.Schema({
+  token: {
+    type: String,
+    required: true
+  },
+  isRevoked: {
+    type: Boolean,
+    default: false
+  },
+  expiresAt: {
+    type: Date,
+    required: true
+  }
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
   username: {
     type: String,
@@ -108,6 +123,7 @@ const UserSchema = new mongoose.Schema({
       required: true
     }
   }],
+  refreshTokens: [RefreshTokenSchema],
   googleId: {
     type: String,
     unique: true,
