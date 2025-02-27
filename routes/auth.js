@@ -784,8 +784,8 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       offshoreRole: newUser.offshoreRole,
       workingRegime: newUser.workingRegime,
       isGoogleUser: newUser.isGoogleUser,
-      company: newUser.company,
-      unitName: newUser.unitName,
+      company: newUser.company || null,
+      unitName: newUser.unitName || null,
       country: newUser.country,
       profilePicture: newUser.isGoogleUser ? undefined : null // Explicitly set to null for non-Google users
     };
@@ -1678,7 +1678,7 @@ router.post('/friend-request', async (req, res) => {
     await newFriendRequest.save();
 
     // Populate the friend request with user details for notification purposes
-    await newFriendRequest.populate('user friend', 'fullName email profilePicture');
+    await newFriendRequest.populate('user friend', 'fullName email profilePicture company unitName');
 
     // Optional: Send notification to the target user
     // You can implement this later with a notification system
@@ -1745,7 +1745,7 @@ router.get('/friends', async (req, res) => {
         { user: currentUserId, status: 'ACCEPTED' },
         { friend: currentUserId, status: 'ACCEPTED' }
       ]
-    }).populate('user friend', 'fullName email profilePicture');
+    }).populate('user friend', 'fullName email profilePicture company unitName');
 
     // Transform friendships to include friend details
     const friends = friendships.map(friendship => {
@@ -1758,6 +1758,8 @@ router.get('/friends', async (req, res) => {
         fullName: friendDetails.fullName,
         email: friendDetails.email,
         profilePicture: friendDetails.profilePicture,
+        company: friendDetails.company || '',
+        unitName: friendDetails.unitName || '',
         sharingPreferences: {
           allowScheduleSync: friendship.sharingPreferences.allowScheduleSync
         }
@@ -1783,7 +1785,7 @@ router.get('/friend-requests', async (req, res) => {
     const pendingRequests = await Friend.find({
       friend: currentUserId,
       status: 'PENDING'
-    }).populate('user', 'fullName email profilePicture');
+    }).populate('user', 'fullName email profilePicture company unitName');
 
     const requests = pendingRequests.map(request => ({
       id: request._id,
@@ -1791,7 +1793,9 @@ router.get('/friend-requests', async (req, res) => {
         id: request.user._id,
         fullName: request.user.fullName,
         email: request.user.email,
-        profilePicture: request.user.profilePicture
+        profilePicture: request.user.profilePicture,
+        company: request.user.company || '',
+        unitName: request.user.unitName || ''
       },
       requestedAt: request.requestedAt
     }));
@@ -1807,61 +1811,49 @@ router.get('/friend-requests', async (req, res) => {
 // Search Users Route
 router.get('/search-users', async (req, res) => {
   try {
+    const { query } = req.query;
     const token = req.headers.authorization?.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const currentUserId = decoded.userId;
 
-    const { query } = req.query;
-
-    // Validate search query
-    if (!query || query.trim().length < 2) {
-      return res.status(400).json({ 
-        message: 'Search query must be at least 2 characters long' 
-      });
+    if (!query || query.length < 2) {
+      return res.status(400).json({ message: 'Search query must be at least 2 characters long' });
     }
 
-    // Search users by full name or username, excluding current user
+    // Search users by name or email, excluding the current user
     const users = await User.find({
-      $and: [
-        { _id: { $ne: currentUserId } }, // Exclude current user
-        {
-          $or: [
-            { fullName: { $regex: query, $options: 'i' } }, // Case-insensitive full name search
-            { username: { $regex: query, $options: 'i' } }  // Case-insensitive username search
-          ]
-        }
+      _id: { $ne: currentUserId },
+      $or: [
+        { fullName: { $regex: query, $options: 'i' } },
+        { email: { $regex: query, $options: 'i' } }
       ]
-    }).select('fullName username email profilePicture offshoreRole'); // Select specific fields
+    }).select('fullName email profilePicture company unitName');
 
-    // Check existing friend requests or friendships
-    const friendRequests = await Friend.find({
+    // Get friend status for each user
+    const friendships = await Friend.find({
       $or: [
         { user: currentUserId },
         { friend: currentUserId }
       ]
     });
 
-    // Annotate users with friendship status
     const usersWithStatus = users.map(user => {
-      const existingRequest = friendRequests.find(
-        req => 
-          (req.user.toString() === user._id.toString() || 
-           req.friend.toString() === user._id.toString())
+      const friendship = friendships.find(f => 
+        (f.user.toString() === user._id.toString() || f.friend.toString() === user._id.toString())
       );
 
       return {
         id: user._id,
         fullName: user.fullName,
-        username: user.username,
         email: user.email,
         profilePicture: user.profilePicture,
-        offshoreRole: user.offshoreRole,
-        friendshipStatus: existingRequest ? existingRequest.status : 'NO_REQUEST'
+        company: user.company || '',
+        unitName: user.unitName || '',
+        friendshipStatus: friendship ? friendship.status : 'NONE'
       };
     });
 
     res.status(200).json({ users: usersWithStatus });
-
   } catch (error) {
     safeLog('Search users error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error searching users' });
