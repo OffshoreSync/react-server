@@ -36,7 +36,7 @@ function safeLog(message, data, level = 'log') {
  * @param {string[]} [customFields=[]] - Additional fields to redact
  * @returns {*} Redacted data
  */
-function redactSensitiveData(data, customFields = []) {
+function redactSensitiveData(data, customFields = [], seen = new WeakSet()) {
   const sensitiveFields = [
     'password', 'email', 'token', 'verificationToken', 
     'accessKey', 'secretKey', 'apiKey', 'refreshToken',
@@ -46,6 +46,12 @@ function redactSensitiveData(data, customFields = []) {
   ];
 
   function deepRedact(value) {
+    // Prevent circular references
+    if (value && typeof value === 'object') {
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+    }
+
     if (value === null || value === undefined) return value;
 
     if (typeof value === 'string') {

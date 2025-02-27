@@ -4,12 +4,12 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const validateGoogleToken = require('../middleware/googleTokenValidator');
 const bcrypt = require('bcryptjs');
-const path = require('path');
-const { getCountryCode } = require('../utils/countries');
-const crypto = require('crypto');
-const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const rateLimit = require('express-rate-limit');
 const { safeLog, redactSensitiveData } = require('../utils/logger');
+const { getCountryCode } = require('../utils/countries');
+const crypto = require('crypto');
+const path = require('path');
+const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const fs = require('fs');
 const { sendPasswordResetEmail } = require('./passwordReset');
 
@@ -236,6 +236,342 @@ const sendVerificationEmail = async (email, verificationToken, language = 'en') 
   }
 };
 
+// Rate limiting for email verification
+const emailVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // Limit each IP to 3 email verification attempts per windowMs
+  message: {
+    error: 'Too many email verification attempts, please try again later',
+    translationKey: 'verifyEmail.error.tooManyAttempts'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+// Email verification route
+router.post('/verify-email', emailVerificationLimiter, async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ 
+        message: 'Verification token is required' 
+      });
+    }
+
+    const user = await User.findOne({
+      verificationToken: token,
+      verificationTokenExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        message: 'Invalid or expired verification token' 
+      });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ 
+        message: 'Email is already verified' 
+      });
+    }
+
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    user.verificationTokenExpires = undefined;
+    await user.save();
+
+    res.json({ 
+      success: true,
+      message: 'Email verified successfully' 
+    });
+  } catch (error) {
+    safeLog('Email verification error:', error, 'error');
+    res.status(500).json({ 
+      message: 'Server error during email verification' 
+    });
+  }
+});
+
+// Login user
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    safeLog(`Login attempt for username`, username ? 'Username provided' : 'No username');
+
+    // Find user by username and ensure workSchedule and workingRegime are properly initialized
+    const user = await User.findOne({ username });
+
+    if (!user) {
+      safeLog(`Login failed: No user found with username ${username}`);
+      return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    // Initialize workingRegime if not set
+    if (!user.workingRegime) {
+      user.workingRegime = {
+        onDutyDays: 28,
+        offDutyDays: 28
+      };
+      await user.save();
+    }
+
+    // Initialize workSchedule if not set
+    if (!user.workSchedule) {
+      user.workSchedule = {};
+      await user.save();
+    }
+
+    // Additional check for password existence
+    if (!user.password && !user.isGoogleUser) {
+      safeLog(`Login error: Non-Google user ${username} has no password`);
+      return res.status(400).json({ message: 'Account setup incomplete' });
+    }
+
+    // Check if user is not verified (for non-Google users)
+    if (!user.isGoogleUser && !user.isVerified) {
+      return res.status(403).json({ 
+        message: 'Please verify your email before logging in',
+        requiresVerification: true,
+        email: user.email
+      });
+    }
+
+    // Check password
+    let isMatch = false;
+    try {
+      // Use the integrity verification method
+      const integrityResult = await user.verifyPasswordIntegrity(password);
+      safeLog('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
+      isMatch = integrityResult.isMatch;
+    } catch (compareError) {
+      safeLog(`Password comparison error for user ${username}:`, redactSensitiveData(compareError), 'error');
+      return res.status(500).json({ message: 'Internal server error during password verification' });
+    }
+
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    // Generate tokens
+    const { token, refreshToken } = generateTokens(user);
+
+    // Store refresh token
+    await storeRefreshToken(user, refreshToken);
+
+    // Return tokens and user data
+    res.json({
+      token,
+      refreshToken,
+      user: createUserResponse(user)
+    });
+
+  } catch (error) {
+    safeLog('Login error for user:', req.body.username, 'error');
+    res.status(500).json({ 
+      message: 'Server error during login',
+      details: error.message 
+    });
+  }
+});
+
+// Helper function to generate tokens
+const generateTokens = (user) => {
+  try {
+    // Log user details
+    safeLog('User details for token generation:', {
+      id: user._id?.toString(),
+      email: redactSensitiveData(user.email),
+      username: redactSensitiveData(user.username)
+    });
+
+    // Validate user object
+    if (!user._id) throw new Error('User ID is missing');
+    if (!user.email) throw new Error('User email is missing');
+    if (!user.username) throw new Error('Username is missing');
+
+    // Generate access token
+    let token;
+    try {
+      token = jwt.sign(
+        { 
+          userId: user._id.toString(),
+          email: user.email,
+          username: user.username,
+          isGoogleUser: user.isGoogleUser,
+          fullName: user.fullName
+        }, 
+        process.env.JWT_SECRET, 
+        { expiresIn: '2h' }
+      );
+      safeLog('Access token generated');
+    } catch (tokenError) {
+      safeLog('Access token generation failed:', tokenError);
+      throw tokenError;
+    }
+
+    // Generate refresh token
+    let refreshToken;
+    try {
+      refreshToken = jwt.sign(
+        { userId: user._id.toString() },
+        process.env.JWT_REFRESH_SECRET,
+        { expiresIn: '7d' }
+      );
+      safeLog('Refresh token generated');
+    } catch (refreshError) {
+      safeLog('Refresh token generation failed:', refreshError);
+      throw refreshError;
+    }
+
+    return { token, refreshToken };
+  } catch (error) {
+    safeLog('Token generation error:', {
+      error: error.message,
+      stack: error.stack
+    });
+    throw error;
+  }
+};
+
+// Helper function to store refresh token
+const storeRefreshToken = async (user, refreshToken) => {
+  // Create expiration date (7 days from now)
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7);
+
+  // Add refresh token to user's tokens array
+  user.refreshTokens = user.refreshTokens || [];
+  user.refreshTokens.push({
+    token: refreshToken,
+    expiresAt,
+    isRevoked: false
+  });
+
+  // Remove expired tokens
+  user.refreshTokens = user.refreshTokens.filter(token => 
+    token.expiresAt > new Date() && !token.isRevoked
+  );
+
+  await user.save();
+};
+
+// Helper function to set auth cookies
+const setAuthCookies = (res, { token, refreshToken }) => {
+  // Debug cookie settings
+  safeLog('Setting auth cookies:', {
+    tokenLength: token?.length,
+    refreshTokenLength: refreshToken?.length,
+    cookieSettings: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/'
+    }
+  });
+
+  // Set access token cookie (2 hours)
+  res.cookie('token', token, {
+    httpOnly: false, // Allow JavaScript access for client-side auth
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 2 * 60 * 60 * 1000 // 2 hours
+  });
+
+  // Set refresh token cookie (7 days)
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true, // Keep refresh token secure
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',  // Changed to root path
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  });
+};
+
+// Helper function to create user response object
+const createUserResponse = (user) => ({
+  id: user._id.toString(), // Use consistent id field
+  _id: user._id.toString(), // Keep _id for backward compatibility
+  username: user.username,
+  fullName: user.fullName,
+  email: user.email,
+  country: user.country,
+  timezone: user.timezone,
+  isVerified: user.isVerified,
+  nextOnboardDate: user.nextOnboardDate,
+  workCycles: user.workCycles || [],
+  profilePicture: user.profilePicture,
+  isGoogleUser: user.isGoogleUser,
+  offshoreRole: user.offshoreRole || 'Support',
+  company: user.company || null,
+  unitName: user.unitName || null,
+  workingRegime: user.workingRegime || {
+    onDutyDays: 28,
+    offDutyDays: 28
+  },
+  workSchedule: user.workSchedule || {}
+});
+
+// Refresh token endpoint
+router.post('/refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({ message: 'Refresh token is required' });
+    }
+
+    // Verify refresh token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+
+    // Find user and check if refresh token exists and is valid
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const storedToken = user.refreshTokens?.find(t => 
+      t.token === refreshToken && 
+      !t.isRevoked && 
+      t.expiresAt > new Date()
+    );
+
+    if (!storedToken) {
+      return res.status(401).json({ message: 'Invalid or expired refresh token' });
+    }
+
+    // Generate new tokens
+    const { token: newToken, refreshToken: newRefreshToken } = generateTokens(user);
+
+    // Revoke old refresh token
+    storedToken.isRevoked = true;
+
+    // Store new refresh token
+    await storeRefreshToken(user, newRefreshToken);
+
+    // Return new tokens
+    res.json({
+      token: newToken,
+      refreshToken: newRefreshToken
+    });
+
+  } catch (error) {
+    safeLog('Error in refresh token:', redactSensitiveData(error), 'error');
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ message: 'Invalid refresh token' });
+    }
+    res.status(500).json({ message: 'Server error during token refresh' });
+  }
+});
+
+// Rate limiting for token refresh
+const refreshTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
 // Register new user
 router.post('/register', blockDisposableEmails, async (req, res) => {
   try {
@@ -435,16 +771,9 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       });
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: newUser._id, 
-        username: newUser.username,
-        isGoogleUser: newUser.isGoogleUser
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
-    );
+    // Generate tokens
+    const tokens = await generateTokens(newUser);
+    setAuthCookies(res, tokens);
 
     // Return user info and token (excluding password)
     const userResponse = {
@@ -463,7 +792,7 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
 
     res.status(201).json({ 
       user: userResponse, 
-      token,
+      token: tokens.accessToken,
       requiresVerification: !googleLogin
     });
 
@@ -472,218 +801,6 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
     res.status(500).json({ 
       message: 'Server error during registration',
       error: error.message 
-    });
-  }
-});
-
-// Rate limiting for email verification
-const emailVerificationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 3, // Limit each IP to 3 email verification attempts per windowMs
-  message: {
-    error: 'Too many email verification attempts, please try again later',
-    translationKey: 'verifyEmail.error.tooManyAttempts'
-  },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
-
-// Email verification route
-router.get('/verify-email', emailVerificationLimiter, async (req, res) => {
-  try {
-    const { token } = req.query;
-
-    safeLog('Received verification token', token ? 'Token present' : 'No token');
-
-    if (!token) {
-      safeLog('No verification token provided');
-      return res.status(400).json({ 
-        message: 'No verification token provided',
-        error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
-      });
-    }
-
-    // Find user with this token that hasn't expired
-    const user = await User.findOne({
-      verificationToken: token,
-      verificationTokenExpires: { $gt: new Date() }
-    });
-
-    safeLog('User found during verification', user ? 'User exists' : 'No user found');
-    safeLog('Current time', new Date().toISOString());
-    safeLog('Token expiration', user ? 'Token has expiration' : 'No expiration');
-
-    // Check for existing user even if current query didn't find a user
-    const existingUser = await User.findOne({ 
-      verificationToken: token 
-    });
-
-    // If no user found in current query, check existing user
-    if (!user && existingUser) {
-      // If user already verified, return success
-      if (existingUser.isVerified) {
-        safeLog(`User ${existingUser.email} is already verified`);
-        return res.status(200).json({ 
-          message: req.t ? req.t('verifyEmail.success.message') : 'Email is already verified. You can now log in.',
-          alreadyVerified: true
-        });
-      }
-    }
-
-    // If no user found at all
-    if (!user && !existingUser) {
-      safeLog('Invalid or expired verification token');
-      return res.status(400).json({ 
-        message: 'Invalid or expired verification token',
-        error: req.t ? req.t('verifyEmail.error.invalidToken') : 'The verification link is invalid or has expired.'
-      });
-    }
-
-    // Use existing user if current query user is null
-    const userToVerify = user || existingUser;
-
-    // Prevent multiple verification attempts
-    if (userToVerify.isVerificationProcessed) {
-      safeLog(`Verification already processed for user ${userToVerify.email}`);
-      return res.status(200).json({ 
-        message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
-        verified: true
-      });
-    }
-
-    // Mark user as verified 
-    userToVerify.isVerified = true;
-    userToVerify.isVerificationProcessed = true; // Add one-time flag
-    userToVerify.verificationToken = undefined; // Clear the verification token
-    userToVerify.verificationTokenExpires = undefined; // Clear token expiration
-
-    await userToVerify.save();
-
-    safeLog(`User ${userToVerify.email} verified successfully`);
-
-    res.status(200).json({ 
-      message: req.t ? req.t('verifyEmail.success.message') : 'Email verified successfully. You can now log in.',
-      verified: true
-    });
-  } catch (error) {
-    safeLog('Email verification error:', redactSensitiveData(error), 'error');
-    res.status(500).json({ 
-      message: 'Server error during email verification',
-      error: error.message
-    });
-  }
-});
-
-// Login user
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    safeLog(`Login attempt for username`, username ? 'Username provided' : 'No username');
-
-    // Find user by username
-    const user = await User.findOne({ username });
-
-    if (!user) {
-      safeLog(`Login failed: No user found with username ${username}`);
-      return res.status(400).json({ message: 'Invalid username or password' });
-    }
-
-    // Detailed user information logging for diagnostics
-    safeLog(`User found: 
-      Username: ${user.username}
-      Is Google User: ${user.isGoogleUser}
-      Password Hash Length: ${user.password ? user.password.length : 'No password'}
-    `);
-
-    // Additional check for password existence
-    if (!user.password && !user.isGoogleUser) {
-      safeLog(`Login error: Non-Google user ${username} has no password`);
-      return res.status(400).json({ message: 'Account setup incomplete' });
-    }
-
-    // Check if user is not verified (for non-Google users)
-    if (!user.isGoogleUser && !user.isVerified) {
-      return res.status(403).json({ 
-        message: 'Please verify your email before logging in',
-        requiresVerification: true,
-        email: user.email
-      });
-    }
-
-    // Check password
-    let isMatch = false;
-    try {
-      // Use the new integrity verification method
-      const integrityResult = await user.verifyPasswordIntegrity(password);
-      safeLog('Password Integrity Verification Result:', JSON.stringify(integrityResult, null, 2));
-      
-      // Determine match based on integrity check
-      isMatch = integrityResult.isMatch;
-      
-      // If no match, log additional details
-      if (!isMatch) {
-        safeLog(`Login failed for user ${username}. Detailed integrity check:`);
-        safeLog(`Stored Hash Length: ${integrityResult.storedHashLength}`);
-        safeLog(`New Hash Length: ${integrityResult.newHashLength}`);
-        safeLog(`Stored Hash Prefix: ${integrityResult.storedHashPrefix}`);
-        safeLog(`New Hash Prefix: ${integrityResult.newHashPrefix}`);
-      }
-    } catch (compareError) {
-      safeLog(`Password comparison error for user ${username}:`, redactSensitiveData(compareError), 'error');
-      return res.status(500).json({ message: 'Internal server error during password verification' });
-    }
-
-    safeLog(`Password match result for ${username}: ${isMatch}`);
-
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid username or password' });
-    }
-
-    // Ensure profilePicture is null for non-Google users
-    if (!user.isGoogleUser && user.profilePicture !== null) {
-      safeLog(`Resetting profile picture for non-Google user ${username}`);
-      user.profilePicture = null;
-      await user.save();
-    }
-
-    // Generate token
-    const token = jwt.sign(
-      { 
-        userId: user._id, 
-        username: user.username,
-        isGoogleUser: user.isGoogleUser
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
-    );
-
-    // Explicitly include all fields in the response
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        offshoreRole: user.offshoreRole,
-        workingRegime: user.workingRegime,
-        isGoogleUser: user.isGoogleUser,
-        company: user.company || null,
-        workSchedule: user.workSchedule || {},
-        
-        // Explicitly include these fields with null fallback
-        unitName: user.unitName || null,
-        country: user.country || null,
-        isGoogleUser: user.isGoogleUser,
-        nextOnBoardDate: user.nextOnBoardDate || null
-      }
-    });
-  } catch (error) {
-    safeLog('Login error for user:', req.body.username, 'error');
-    res.status(500).json({ 
-      message: 'Server error during login',
-      details: error.message 
     });
   }
 });
@@ -697,106 +814,124 @@ const mapCountryToCode = (countryName) => {
 // Google Login/Registration
 router.post('/google-login', validateGoogleToken, async (req, res) => {
   try {
-    // Use validated Google user info from middleware
-    const { email, name, picture, googleId, country } = req.googleUser;
+    safeLog('Google login request received');
+    
+    // Validate required fields
+    if (!req.googleUser || !req.googleUser.email) {
+      safeLog('Missing Google user info:', { hasUser: !!req.googleUser });
+      return res.status(400).json({ 
+        message: 'Invalid Google authentication',
+        error: 'Missing required user information'
+      });
+    }
+
+    // Destructure validated Google user info
+    const { email, name, picture, country } = req.googleUser;
+    safeLog('Processing Google login for:', redactSensitiveData(email));
 
     // Map country name to country code
     const countryCode = mapCountryToCode(country);
+    safeLog('Mapped country code:', countryCode);
 
-    // Log incoming profile details
-    safeLog('Incoming Google Profile:', redactSensitiveData({
-      email,
-      name,
-      picture,
-      googleId,
-      country,
-      mappedCountryCode: countryCode
-    }));
-
-    // Check if user already exists
-    let user = await User.findOne({ email });
+    // Find or create user
+    let user;
+    try {
+      user = await User.findOne({ email });
+      safeLog('Existing user found:', !!user);
+    } catch (findError) {
+      safeLog('Error finding user:', redactSensitiveData(findError));
+      throw findError;
+    }
 
     if (!user) {
+      safeLog('Creating new user for Google login');
       // Create new user with Google credentials
+      const username = email.split('@')[0];
       user = new User({
         email,
+        username,
         fullName: name,
-        username: email.split('@')[0],
         isGoogleUser: true,
-        googleId,
-        profilePicture: picture, // Explicitly set profile picture
-        // Use mapped country code
+        profilePicture: picture,
+        isVerified: true,
         country: countryCode,
-        // Default values for required fields
-        offshoreRole: 'Support', // Default role
+        offshoreRole: 'Support',
         workingRegime: {
           onDutyDays: 28,
           offDutyDays: 28
         }
       });
-
-      await user.save();
-      safeLog('New user created with details:', redactSensitiveData({
-        profilePicture: user.profilePicture,
-        country: user.country
-      }));
+      
+      try {
+        await user.save();
+        safeLog('New Google user created successfully');
+      } catch (saveError) {
+        safeLog('Error saving new Google user:', redactSensitiveData(saveError));
+        // Check if username already exists
+        if (saveError.code === 11000) {
+          // Try with a unique username
+          user.username = `${username}_${Math.random().toString(36).substr(2, 5)}`;
+          await user.save();
+          safeLog('Saved user with modified username');
+        } else {
+          throw saveError;
+        }
+      }
     } else {
-      // Update existing user's profile picture and country
-      user.profilePicture = picture;
+      safeLog('Updating existing user profile');
+      // Update existing user's profile
+      user.profilePicture = picture || user.profilePicture;
+      user.isGoogleUser = true;
       
       // Only update country if it's not already set
       if (!user.country || user.country === 'Unknown') {
         user.country = countryCode;
       }
 
-      await user.save();
-      safeLog('Existing user updated with details:', redactSensitiveData({
-        profilePicture: user.profilePicture,
-        country: user.country
-      }));
+      try {
+        await user.save();
+        safeLog('Updated existing user profile');
+      } catch (updateError) {
+        safeLog('Error updating user profile:', redactSensitiveData(updateError));
+        throw updateError;
+      }
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: user._id, 
-        username: user.username,
-        isGoogleUser: true
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
-    );
+    // Ensure user has required fields for token generation
+    if (!user._id || !user.email || !user.username) {
+      safeLog('Invalid user object:', {
+        hasId: !!user._id,
+        hasEmail: !!user.email,
+        hasUsername: !!user.username
+      });
+      throw new Error('Invalid user object for token generation');
+    }
 
-    // Return user info and token (excluding password)
-    const userResponse = {
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
-      offshoreRole: user.offshoreRole,
-      workingRegime: user.workingRegime,
-      isGoogleUser: user.isGoogleUser || true, // Ensure this is always set for Google logins
-      profilePicture: user.profilePicture, // Explicitly return profile picture
-      country: user.country || 'US', // Ensure country is always returned
-      company: user.company || null,
-      unitName: user.unitName || null
-    };
+    safeLog('Generating tokens for user');
+    // Generate tokens
+    const { token, refreshToken } = generateTokens(user);
 
-    // Additional logging
-    safeLog('User Response:', redactSensitiveData({
-      profilePicture: userResponse.profilePicture,
-      country: userResponse.country
-    }));
+    safeLog('Storing refresh token');
+    // Store refresh token
+    await storeRefreshToken(user, refreshToken);
 
-    res.status(200).json({ 
-      user: userResponse, 
-      token 
+    safeLog('Sending response');
+    // Return tokens and user data
+    res.json({
+      token,
+      refreshToken,
+      user: createUserResponse(user)
     });
+
   } catch (error) {
-    safeLog('Google Login Error:', redactSensitiveData(error), 'error');
+    safeLog('Google login error:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({ 
-      message: 'Internal server error during Google login',
-      error: error.message 
+      message: 'Error during Google authentication',
+      error: error.message
     });
   }
 });
@@ -833,15 +968,29 @@ router.delete('/delete-account', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json({ message: 'Account deleted successfully' });
+    // Clear all auth-related cookies
+    const cookiesToClear = ['token', 'refreshToken', 'user', 'XSRF-TOKEN'];
+    cookiesToClear.forEach(cookieName => {
+      res.clearCookie(cookieName, {
+        httpOnly: cookieName === 'token' || cookieName === 'refreshToken',
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/'
+      });
+    });
+
+    res.json({ 
+      message: 'Account deleted successfully',
+      clearAuth: true
+    });
   } catch (error) {
     safeLog('Account deletion error:', redactSensitiveData(error), 'error');
     
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({ message: 'Invalid token' });
     }
-
-    res.status(500).json({ message: 'Server error during account deletion' });
+    
+    res.status(500).json({ message: 'Error deleting account' });
   }
 });
 
@@ -977,17 +1126,45 @@ router.put('/update-profile', async (req, res) => {
 router.get('/profile', async (req, res) => {
   try {
     // Get token from headers
-    const token = req.headers.authorization?.split(' ')[1];
+    const authHeader = req.headers.authorization;
+    
+    // Debug auth header
+    safeLog('Profile Request Auth:', {
+      hasAuthHeader: !!authHeader,
+      headerValue: authHeader ? `${authHeader.substring(0, 20)}...` : 'none'
+    });
 
-    if (!token) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ message: 'No token provided' });
     }
+
+    const token = authHeader.split(' ')[1];
+
+    // Debug raw token
+    safeLog('Raw token:', {
+      length: token?.length,
+      firstChars: token ? `${token.substring(0, 20)}...` : 'none'
+    });
 
     // Verify token
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      // Debug decoded token
+      safeLog('Decoded token:', {
+        userId: decoded.userId,
+        email: decoded.email,
+        isGoogleUser: decoded.isGoogleUser
+      });
     } catch (error) {
+      // Log the specific JWT error
+      safeLog('JWT Verification Error:', {
+        name: error.name,
+        message: error.message,
+        token: token ? `${token.substring(0, 20)}...` : 'none'
+      });
+
       if (error.name === 'TokenExpiredError') {
         return res.status(401).json({ 
           message: 'Token expired', 
@@ -995,7 +1172,10 @@ router.get('/profile', async (req, res) => {
           requiresReAuthentication: true 
         });
       }
-      throw error;
+      return res.status(401).json({ 
+        message: 'Invalid token',
+        error: error.name
+      });
     }
 
     // Find user
@@ -1005,35 +1185,27 @@ router.get('/profile', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Log user details for debugging
-    safeLog('User Profile Details:', redactSensitiveData({
-      isGoogleUser: user.isGoogleUser,
-      profilePicture: user.profilePicture
-    }));
-
-    // Return user profile (excluding sensitive information)
-    res.json({ 
-      user: {
-        id: user._id,
-        username: user.username,
+    // Generate new token for the response
+    const newToken = jwt.sign(
+      { 
+        userId: user._id.toString(),
         email: user.email,
-        fullName: user.fullName,
-        offshoreRole: user.offshoreRole,
-        workingRegime: user.workingRegime || {
-          onDutyDays: 28,
-          offDutyDays: 28
-        },
-        company: user.company,
-        workSchedule: user.workSchedule,
-        unitName: user.unitName || null,
-        country: user.country || null,
+        username: user.username,
         isGoogleUser: user.isGoogleUser,
-        profilePicture: user.profilePicture || null // Explicitly include profilePicture
-      }
+        fullName: user.fullName
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '2h' }
+    );
+
+    // Return user profile with new token
+    res.json({ 
+      user: createUserResponse(user),
+      token: newToken
     });
   } catch (error) {
-    safeLog('Profile retrieval error:', redactSensitiveData(error), 'error');
-    res.status(500).json({ message: 'Server error during profile retrieval' });
+    safeLog('Profile fetch error:', error, 'error');
+    res.status(500).json({ message: 'Server error fetching profile' });
   }
 });
 
@@ -1581,7 +1753,8 @@ router.get('/friends', async (req, res) => {
       const friendDetails = isFriendInitiator ? friendship.friend : friendship.user;
       
       return {
-        id: friendDetails._id,
+        _id: friendDetails._id, // Include both _id and id for compatibility
+        id: friendDetails._id,  // Include both _id and id for compatibility
         fullName: friendDetails.fullName,
         email: friendDetails.email,
         profilePicture: friendDetails.profilePicture,
@@ -1716,11 +1889,11 @@ router.post('/password/request-reset', async (req, res) => {
 
     // Generate password reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour
+    const resetTokenExpiry = Date.now() + 3600000; // 1 hour
 
     // Update user with reset token
     user.passwordResetToken = resetToken;
-    user.passwordResetTokenExpires = resetTokenExpires;
+    user.passwordResetTokenExpires = resetTokenExpiry;
     await user.save();
 
     // Send password reset email
@@ -1732,8 +1905,10 @@ router.post('/password/request-reset', async (req, res) => {
       );
     } catch (emailError) {
       safeLog('Password reset email failed:', redactSensitiveData(emailError), 'error');
-      return res.status(500).json({ 
-        message: 'Failed to send password reset email' 
+      
+      return res.status(500).json({
+        message: 'Failed to send password reset email',
+        error: emailError.message
       });
     }
 

@@ -2,22 +2,45 @@ const { OAuth2Client } = require('google-auth-library');
 const geoip = require('geoip-lite');
 const { safeLog, redactSensitiveData } = require('../utils/logger');
 
-const client = new OAuth2Client(process.env.REACT_APP_GOOGLE_CLIENT_ID);
+// Debug log environment variables (redacted)
+safeLog('Google Client ID available:', !!process.env.GOOGLE_CLIENT_ID);
+safeLog('Google Client ID length:', process.env.GOOGLE_CLIENT_ID?.length || 0);
+
+// Initialize OAuth client with server-side environment variable
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const validateGoogleToken = async (req, res, next) => {
-  const { googleToken } = req.body;
+  const { credential } = req.body;
 
-  if (!googleToken) {
-    return res.status(400).json({ message: 'No Google token provided' });
+  // Debug log request
+  safeLog('Google token validation request:', {
+    hasCredential: !!credential,
+    credentialLength: credential?.length || 0
+  });
+
+  if (!credential) {
+    return res.status(400).json({ message: 'No Google credential provided' });
   }
 
   try {
+    // Debug log verification attempt
+    safeLog('Attempting to verify token with client ID:', process.env.GOOGLE_CLIENT_ID?.substring(0, 10) + '...');
+    
     const ticket = await client.verifyIdToken({
-      idToken: googleToken,
-      audience: process.env.REACT_APP_GOOGLE_CLIENT_ID
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID
     });
 
     const payload = ticket.getPayload();
+    
+    // Debug log payload
+    safeLog('Token payload received:', {
+      hasPayload: !!payload,
+      email: payload?.email ? 'Present' : 'Missing',
+      name: payload?.name ? 'Present' : 'Missing',
+      picture: payload?.picture ? 'Present' : 'Missing',
+      locale: payload?.locale || 'Missing'
+    });
     
     // Validate token payload
     if (!payload) {
@@ -64,9 +87,18 @@ const validateGoogleToken = async (req, res, next) => {
       locale
     };
 
+    // Debug log success
+    safeLog('Successfully validated Google token for:', redactSensitiveData(email));
+
     next();
   } catch (error) {
-    safeLog('Google token validation error:', redactSensitiveData(error));
+    // Detailed error logging
+    safeLog('Google token validation error:', {
+      name: error.name,
+      message: redactSensitiveData(error.message),
+      stack: error.stack ? 'Present' : 'Missing'
+    });
+
     return res.status(401).json({ 
       message: 'Failed to validate Google token',
       error: redactSensitiveData(error.message) 

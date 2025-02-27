@@ -17,6 +17,21 @@ const WorkingRegimeSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
+const RefreshTokenSchema = new mongoose.Schema({
+  token: {
+    type: String,
+    required: true
+  },
+  isRevoked: {
+    type: Boolean,
+    default: false
+  },
+  expiresAt: {
+    type: Date,
+    required: true
+  }
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
   username: {
     type: String,
@@ -43,7 +58,7 @@ const UserSchema = new mongoose.Schema({
         
         // Optional: Add a more flexible password validation
         // This allows passwords of at least 6 characters
-        return v.length >= 6;
+        return v && v.length >= 6;
       },
       message: 'Password must be at least 6 characters long'
     }
@@ -85,10 +100,6 @@ const UserSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  nextOnBoardDate: {
-    type: Date,
-    default: null
-  },
   workSchedule: {
     type: Object,
     default: {}
@@ -112,6 +123,7 @@ const UserSchema = new mongoose.Schema({
       required: true
     }
   }],
+  refreshTokens: [RefreshTokenSchema],
   googleId: {
     type: String,
     unique: true,
@@ -164,7 +176,7 @@ UserSchema.statics.getPredefinedRegimes = function() {
 // Hash password before saving
 UserSchema.pre('save', async function(next) {
   // Only hash password if it has been modified or is new
-  if (this.isModified('password') && !this.isGoogleUser) {
+  if (this.isModified('password') && !this.isGoogleUser && this.password) {
     try {
       safeLog('Pre-save password hashing triggered');
       safeLog(`Password modification for user: ${this.username}`);

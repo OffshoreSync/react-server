@@ -1,14 +1,36 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const morgan = require('morgan');
 const path = require('path');  // Add path module
 const crypto = require('crypto');
-const cookieParser = require('cookie-parser');  // Add this import
 const jwt = require('jsonwebtoken'); // Add jwt import
 require('dotenv').config();
 const { safeLog } = require('./utils/logger');
 
 const app = express();
+
+// Security middleware
+app.use(helmet({
+  crossOriginEmbedderPolicy: false, // Required for Google Sign-In
+  crossOriginOpenerPolicy: false, // Required for Google Sign-In popup
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'", process.env.REACT_APP_FRONTEND_URL],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://accounts.google.com", "https://apis.google.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      connectSrc: ["'self'", process.env.REACT_APP_FRONTEND_URL, process.env.REACT_APP_BACKEND_URL, "https://accounts.google.com"],
+      frameSrc: ["'self'", "https://accounts.google.com"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: []
+    }
+  }
+}));
 
 // CSRF Protection Middleware
 const generateCSRFToken = () => {
@@ -28,6 +50,7 @@ const csrfProtection = (req, res, next) => {
     '/api/csrf-token',
     '/api/auth/register',
     '/api/auth/login',
+    '/api/auth/refresh',
     '/api/password/request-reset',
     '/api/password/reset'
   ];
@@ -52,7 +75,7 @@ const csrfProtection = (req, res, next) => {
 
   // Validate CSRF for other routes
   const csrfCookie = req.cookies['XSRF-TOKEN'];
-  const csrfHeader = req.headers['x-xsrf-token'];
+  const csrfHeader = req.headers['x-csrf-token'] || req.headers['x-xsrf-token'];
 
   if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
     safeLog('CSRF Token Validation Failed', {
@@ -72,45 +95,49 @@ const csrfProtection = (req, res, next) => {
   next();
 };
 
-// Middleware
+// CORS configuration
 app.use(cors({
-  origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:3000', 
-      process.env.REACT_APP_FRONTEND_URL
-    ];
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type', 
     'Authorization', 
-    'X-Requested-With', 
-    'X-XSRF-TOKEN',  // Explicitly allow CSRF token header
-    'Accept'
+    'X-XSRF-TOKEN',
+    'X-Requested-With',
+    'X-CSRF-Token',
+    'Accept',
+    'Origin',
+    'Cookie'
   ],
-  exposedHeaders: ['X-XSRF-TOKEN']  // Expose CSRF token header to client
+  exposedHeaders: ['X-CSRF-Token', 'Set-Cookie'],
+  maxAge: 600 // 10 minutes
 }));
 
-app.use(cookieParser());  // Add cookie-parser middleware
-app.use(express.json());
+// Cookie parser middleware
+app.use(cookieParser());
 
-// Handle preflight requests
-app.options('*', cors());  // Enable preflight requests for all routes
+// Body parser middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Logging middleware
+app.use(morgan('dev'));
 
 app.use(csrfProtection);
 
+// API routes
+const apiRouter = express.Router();
+app.use('/api', apiRouter);
+
+// Mount auth routes
+const authRoutes = require('./routes/auth');
+const passwordResetRoutes = require('./routes/passwordReset');
+apiRouter.use('/auth', authRoutes);
+apiRouter.use('/password', passwordResetRoutes);
+
 // CSRF token endpoint
-app.get('/api/csrf-token', (req, res) => {
+apiRouter.get('/csrf-token', (req, res) => {
   // Ensure CSRF token is set
   let csrfToken = req.cookies['XSRF-TOKEN'];
   
@@ -118,16 +145,20 @@ app.get('/api/csrf-token', (req, res) => {
     csrfToken = generateCSRFToken();
     res.cookie('XSRF-TOKEN', csrfToken, {
       httpOnly: false,
-      sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production'
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/'
     });
   }
-
-  safeLog('CSRF Token Endpoint - Token:', csrfToken);
 
   res.json({ 
     csrfToken: csrfToken 
   });
+});
+
+// Root route
+app.get('/', (req, res) => {
+  res.send('Welcome to the Offshore Sync Application');
 });
 
 // MongoDB Connection
@@ -139,18 +170,6 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app', {
 const connection = mongoose.connection;
 connection.once('open', () => {
   safeLog('MongoDB database connection established successfully');
-});
-
-// Routes
-const authRoutes = require('./routes/auth');
-const passwordResetRoutes = require('./routes/passwordReset');
-
-app.use('/api/auth', authRoutes);
-app.use('/api/password', passwordResetRoutes);
-
-// Root route
-app.get('/', (req, res) => {
-  res.send('Welcome to the Offshore Sync Application');
 });
 
 const PORT = process.env.PORT || 5000;
