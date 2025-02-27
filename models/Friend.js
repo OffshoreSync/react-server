@@ -1,6 +1,13 @@
 const mongoose = require('mongoose');
 const { safeLog, redactSensitiveData } = require('../utils/logger');
 
+const sharingPreferencesSchema = new mongoose.Schema({
+  allowScheduleSync: {
+    type: Boolean,
+    default: false
+  }
+}, { _id: false });
+
 const FriendSchema = new mongoose.Schema({
   user: { 
     type: mongoose.Schema.Types.ObjectId, 
@@ -18,10 +25,12 @@ const FriendSchema = new mongoose.Schema({
     default: 'PENDING'
   },
   sharingPreferences: {
-    allowScheduleSync: {
-      type: Boolean,
-      default: false
-    }
+    type: sharingPreferencesSchema,
+    default: () => ({})
+  },
+  friendSharingPreferences: {
+    type: sharingPreferencesSchema,
+    default: () => ({})
   },
   requestedAt: {
     type: Date,

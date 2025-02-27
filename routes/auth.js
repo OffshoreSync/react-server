@@ -1745,23 +1745,34 @@ router.get('/friends', async (req, res) => {
         { user: currentUserId, status: 'ACCEPTED' },
         { friend: currentUserId, status: 'ACCEPTED' }
       ]
-    }).populate('user friend', 'fullName email profilePicture company unitName');
+    })
+    .populate('user', 'fullName email profilePicture company unitName')
+    .populate('friend', 'fullName email profilePicture company unitName');
 
-    // Transform friendships to include friend details
+    // Transform friendships to include friend details and mutual sync preferences
     const friends = friendships.map(friendship => {
-      const isFriendInitiator = friendship.user._id.toString() === currentUserId;
-      const friendDetails = isFriendInitiator ? friendship.friend : friendship.user;
+      // Determine if current user is the initiator or receiver of friendship
+      const isInitiator = friendship.user._id.toString() === currentUserId;
+      const friendData = isInitiator ? friendship.friend : friendship.user;
       
+      // Get sync preferences from both perspectives
+      const myPreferences = isInitiator ? friendship.sharingPreferences : friendship.friendSharingPreferences;
+      const theirPreferences = isInitiator ? friendship.friendSharingPreferences : friendship.sharingPreferences;
+
       return {
-        _id: friendDetails._id, // Include both _id and id for compatibility
-        id: friendDetails._id,  // Include both _id and id for compatibility
-        fullName: friendDetails.fullName,
-        email: friendDetails.email,
-        profilePicture: friendDetails.profilePicture,
-        company: friendDetails.company || '',
-        unitName: friendDetails.unitName || '',
+        _id: friendData._id,
+        fullName: friendData.fullName,
+        email: friendData.email,
+        profilePicture: friendData.profilePicture,
+        company: friendData.company || '',
+        unitName: friendData.unitName || '',
         sharingPreferences: {
-          allowScheduleSync: friendship.sharingPreferences.allowScheduleSync
+          // Main sync toggle for UI display
+          allowScheduleSync: myPreferences?.allowScheduleSync || false,
+          // Whether I've enabled sync to see their schedule
+          iCanSeeTheirSchedule: myPreferences?.allowScheduleSync || false,
+          // Whether they've enabled sync to let me see their schedule
+          theyCanSeeMySchedule: theirPreferences?.allowScheduleSync || false
         }
       };
     });
@@ -1912,6 +1923,91 @@ router.post('/password/request-reset', async (req, res) => {
     safeLog('Password reset request error:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
       message: 'Server error during password reset request' 
+    });
+  }
+});
+
+// Toggle friend sync status
+router.put('/friend-sync/:friendId', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+    const { friendId } = req.params;
+    const { allowScheduleSync } = req.body;
+
+    // Find the friendship document
+    const friendship = await Friend.findOne({
+      $or: [
+        { user: currentUserId, friend: friendId, status: 'ACCEPTED' },
+        { user: friendId, friend: currentUserId, status: 'ACCEPTED' }
+      ]
+    });
+
+    if (!friendship) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Friendship not found' 
+      });
+    }
+
+    // Determine if current user is the initiator or receiver
+    const isInitiator = friendship.user._id.toString() === currentUserId;
+    
+    // Update the appropriate sharing preferences
+    const updateQuery = isInitiator
+      ? { sharingPreferences: { allowScheduleSync } }
+      : { friendSharingPreferences: { allowScheduleSync } };
+
+    // Update and get the new document in one operation
+    const updatedFriendship = await Friend.findByIdAndUpdate(
+      friendship._id,
+      { $set: updateQuery },
+      { 
+        new: true,
+        runValidators: true
+      }
+    ).populate('user', 'fullName email profilePicture company unitName')
+      .populate('friend', 'fullName email profilePicture company unitName');
+
+    if (!updatedFriendship) {
+      return res.status(404).json({
+        success: false,
+        message: 'Failed to update friendship'
+      });
+    }
+
+    // Format the response with mutual sync status
+    const friendData = isInitiator ? updatedFriendship.friend : updatedFriendship.user;
+    const myPreferences = isInitiator ? updatedFriendship.sharingPreferences : updatedFriendship.friendSharingPreferences;
+    const theirPreferences = isInitiator ? updatedFriendship.friendSharingPreferences : updatedFriendship.sharingPreferences;
+
+    const formattedResponse = {
+      success: true,
+      message: allowScheduleSync ? 'Sync enabled' : 'Sync disabled',
+      friend: {
+        _id: friendData._id,
+        id: friendData._id,
+        fullName: friendData.fullName,
+        email: friendData.email,
+        profilePicture: friendData.profilePicture,
+        company: friendData.company || '',
+        unitName: friendData.unitName || '',
+        sharingPreferences: {
+          allowScheduleSync: myPreferences?.allowScheduleSync || false,
+          iCanSeeTheirSchedule: myPreferences?.allowScheduleSync || false,
+          theyCanSeeMySchedule: theirPreferences?.allowScheduleSync || false
+        }
+      }
+    };
+
+    res.status(200).json(formattedResponse);
+
+  } catch (error) {
+    safeLog('Toggle friend sync error:', redactSensitiveData(error), 'error');
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error toggling sync status' 
     });
   }
 });
