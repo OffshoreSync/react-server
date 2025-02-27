@@ -300,12 +300,27 @@ router.post('/login', async (req, res) => {
 
     safeLog(`Login attempt for username`, username ? 'Username provided' : 'No username');
 
-    // Find user by username
+    // Find user by username and ensure workSchedule and workingRegime are properly initialized
     const user = await User.findOne({ username });
 
     if (!user) {
       safeLog(`Login failed: No user found with username ${username}`);
       return res.status(400).json({ message: 'Invalid username or password' });
+    }
+
+    // Initialize workingRegime if not set
+    if (!user.workingRegime) {
+      user.workingRegime = {
+        onDutyDays: 28,
+        offDutyDays: 28
+      };
+      await user.save();
+    }
+
+    // Initialize workSchedule if not set
+    if (!user.workSchedule) {
+      user.workSchedule = {};
+      await user.save();
     }
 
     // Additional check for password existence
@@ -953,15 +968,29 @@ router.delete('/delete-account', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json({ message: 'Account deleted successfully' });
+    // Clear all auth-related cookies
+    const cookiesToClear = ['token', 'refreshToken', 'user', 'XSRF-TOKEN'];
+    cookiesToClear.forEach(cookieName => {
+      res.clearCookie(cookieName, {
+        httpOnly: cookieName === 'token' || cookieName === 'refreshToken',
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/'
+      });
+    });
+
+    res.json({ 
+      message: 'Account deleted successfully',
+      clearAuth: true
+    });
   } catch (error) {
     safeLog('Account deletion error:', redactSensitiveData(error), 'error');
     
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({ message: 'Invalid token' });
     }
-
-    res.status(500).json({ message: 'Server error during account deletion' });
+    
+    res.status(500).json({ message: 'Error deleting account' });
   }
 });
 
