@@ -417,7 +417,7 @@ const generateTokens = (user) => {
       refreshToken = jwt.sign(
         { userId: user._id.toString() },
         process.env.JWT_REFRESH_SECRET,
-        { expiresIn: '7d' }
+        { expiresIn: '30d' }
       );
       safeLog('Refresh token generated');
     } catch (refreshError) {
@@ -437,9 +437,9 @@ const generateTokens = (user) => {
 
 // Helper function to store refresh token
 const storeRefreshToken = async (user, refreshToken) => {
-  // Create expiration date (7 days from now)
+  // Create expiration date (30 days from now)
   const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7);
+  expiresAt.setDate(expiresAt.getDate() + 30);
 
   // Add refresh token to user's tokens array
   user.refreshTokens = user.refreshTokens || [];
@@ -466,7 +466,7 @@ const setAuthCookies = (res, { token, refreshToken }) => {
     cookieSettings: {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       path: '/'
     }
   });
@@ -475,18 +475,18 @@ const setAuthCookies = (res, { token, refreshToken }) => {
   res.cookie('token', token, {
     httpOnly: false, // Allow JavaScript access for client-side auth
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    sameSite: 'strict',
     path: '/',
     maxAge: 2 * 60 * 60 * 1000 // 2 hours
   });
 
-  // Set refresh token cookie (7 days)
+  // Set refresh token cookie (30 days)
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true, // Keep refresh token secure
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',  // Changed to root path
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   });
 };
 

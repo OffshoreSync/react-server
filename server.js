@@ -111,11 +111,28 @@ app.use(cors({
     'Cookie'
   ],
   exposedHeaders: ['X-CSRF-Token', 'Set-Cookie'],
-  maxAge: 600 // 10 minutes
+  maxAge: 86400 // 24 hours
 }));
 
-// Cookie parser middleware
-app.use(cookieParser());
+// Cookie parser middleware with secure settings
+app.use(cookieParser(process.env.JWT_SECRET)); // Sign cookies with JWT secret
+
+// Configure cookie settings for the entire app
+app.use((req, res, next) => {
+  res.cookie = res.cookie.bind(res);
+  const originalCookie = res.cookie;
+  res.cookie = function (name, value, options = {}) {
+    const defaultOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days default
+    };
+    return originalCookie.call(this, name, value, { ...defaultOptions, ...options });
+  };
+  next();
+});
 
 // Body parser middleware
 app.use(express.json());
