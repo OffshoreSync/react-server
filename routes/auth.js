@@ -403,7 +403,7 @@ const generateTokens = (user) => {
           fullName: user.fullName
         }, 
         process.env.JWT_SECRET, 
-        { expiresIn: '2h' }
+        { expiresIn: '1m' } // Changed from 2h to 1m for testing
       );
       safeLog('Access token generated');
     } catch (tokenError) {
@@ -514,21 +514,54 @@ const createUserResponse = (user) => ({
   workSchedule: user.workSchedule || {}
 });
 
+// Rate limiting for token refresh
+const refreshTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  handler: (req, res) => {
+    safeLog('Rate limit exceeded for refresh token endpoint', {
+      ip: req.ip,
+      path: req.path
+    }, 'warn');
+    res.status(429).json({ 
+      message: 'Too many refresh token attempts. Please try again later.',
+      retryAfter: Math.ceil(windowMs / 1000 / 60) // minutes
+    });
+  }
+});
+
 // Refresh token endpoint
-router.post('/refresh-token', async (req, res) => {
+router.post('/refresh-token', refreshTokenLimiter, async (req, res) => {
   try {
     const { refreshToken } = req.body;
 
     if (!refreshToken) {
+      safeLog('Refresh token missing in request', { ip: req.ip }, 'warn');
       return res.status(400).json({ message: 'Refresh token is required' });
     }
 
     // Verify refresh token
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch (jwtError) {
+      safeLog('Invalid refresh token', { 
+        error: jwtError.message,
+        ip: req.ip 
+      }, 'warn');
+      return res.status(401).json({ 
+        message: 'Invalid refresh token',
+        error: jwtError.name === 'TokenExpiredError' ? 'Token has expired' : 'Token is invalid'
+      });
+    }
 
     // Find user and check if refresh token exists and is valid
     const user = await User.findById(decoded.userId);
     if (!user) {
+      safeLog('User not found during token refresh', { 
+        userId: decoded.userId,
+        ip: req.ip 
+      }, 'warn');
       return res.status(404).json({ message: 'User not found' });
     }
 
@@ -539,6 +572,13 @@ router.post('/refresh-token', async (req, res) => {
     );
 
     if (!storedToken) {
+      safeLog('Invalid or expired refresh token', { 
+        userId: user._id,
+        ip: req.ip,
+        tokenFound: !!user.refreshTokens?.find(t => t.token === refreshToken),
+        tokenRevoked: user.refreshTokens?.find(t => t.token === refreshToken)?.isRevoked,
+        tokenExpired: user.refreshTokens?.find(t => t.token === refreshToken)?.expiresAt < new Date()
+      }, 'warn');
       return res.status(401).json({ message: 'Invalid or expired refresh token' });
     }
 
@@ -547,14 +587,25 @@ router.post('/refresh-token', async (req, res) => {
 
     // Revoke old refresh token
     storedToken.isRevoked = true;
+    storedToken.revokedAt = new Date();
 
     // Store new refresh token
     await storeRefreshToken(user, newRefreshToken);
 
+    // Set cookies in response
+    setAuthCookies(res, { token: newToken, refreshToken: newRefreshToken });
+
+    // Log successful token refresh
+    safeLog('Refresh token successfully exchanged', { 
+      userId: user._id,
+      ip: req.ip
+    }, 'info');
+
     // Return new tokens
     res.json({
       token: newToken,
-      refreshToken: newRefreshToken
+      refreshToken: newRefreshToken,
+      user: createUserResponse(user)
     });
 
   } catch (error) {
@@ -564,12 +615,6 @@ router.post('/refresh-token', async (req, res) => {
     }
     res.status(500).json({ message: 'Server error during token refresh' });
   }
-});
-
-// Rate limiting for token refresh
-const refreshTokenLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
 });
 
 // Register new user
