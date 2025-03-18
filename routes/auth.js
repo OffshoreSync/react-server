@@ -403,7 +403,7 @@ const generateTokens = (user) => {
           fullName: user.fullName
         }, 
         process.env.JWT_SECRET, 
-        { expiresIn: '1m' } // Changed from 2h to 1m for testing
+        { expiresIn: '2h' }
       );
       safeLog('Access token generated');
     } catch (tokenError) {
