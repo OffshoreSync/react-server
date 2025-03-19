@@ -403,7 +403,7 @@ const generateTokens = (user) => {
           fullName: user.fullName
         }, 
         process.env.JWT_SECRET, 
-        { expiresIn: '2h' }
+        { expiresIn: '1m' } // 1 minute for access token
       );
       safeLog('Access token generated');
     } catch (tokenError) {
@@ -417,7 +417,7 @@ const generateTokens = (user) => {
       refreshToken = jwt.sign(
         { userId: user._id.toString() },
         process.env.JWT_REFRESH_SECRET,
-        { expiresIn: '30d' }
+        { expiresIn: '7d' } // 7 days for refresh token
       );
       safeLog('Refresh token generated');
     } catch (refreshError) {
@@ -592,16 +592,28 @@ router.post('/refresh-token', refreshTokenLimiter, async (req, res) => {
     // Store new refresh token
     await storeRefreshToken(user, newRefreshToken);
 
-    // Set cookies in response
-    setAuthCookies(res, { token: newToken, refreshToken: newRefreshToken });
+    // Set cookies in response with production-specific settings
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    };
+
+    res.cookie('token', newToken, { ...cookieOptions, maxAge: 60 * 1000 }); // 1 minute
+    res.cookie('refreshToken', newRefreshToken, cookieOptions);
 
     // Log successful token refresh
     safeLog('Refresh token successfully exchanged', { 
       userId: user._id,
-      ip: req.ip
+      ip: req.ip,
+      environment: process.env.NODE_ENV,
+      cookieSecure: cookieOptions.secure,
+      cookieSameSite: cookieOptions.sameSite
     }, 'info');
 
-    // Return new tokens
+    // Return new tokens and user data
     res.json({
       token: newToken,
       refreshToken: newRefreshToken,
