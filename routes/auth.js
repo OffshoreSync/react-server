@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const router = express.Router();
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
@@ -2065,6 +2066,85 @@ router.put('/friend-sync/:friendId', async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Server error toggling sync status' 
+    });
+  }
+});
+
+// Google OAuth token exchange
+router.post('/google-token-exchange', async (req, res) => {
+  try {
+    const { code } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({ error: 'Authorization code is required' });
+    }
+
+    // Verify required environment variables
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+      console.error('Missing required Google OAuth environment variables');
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
+    console.log('Attempting token exchange with params:', {
+      clientIdPresent: !!process.env.GOOGLE_CLIENT_ID,
+      clientSecretPresent: !!process.env.GOOGLE_CLIENT_SECRET,
+      redirectUri: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
+      codeLength: code.length
+    });
+
+    // Create form data for token exchange
+    const formData = new URLSearchParams();
+    formData.append('code', code);
+    formData.append('client_id', process.env.GOOGLE_CLIENT_ID);
+    formData.append('client_secret', process.env.GOOGLE_CLIENT_SECRET);
+    formData.append('redirect_uri', process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000');
+    formData.append('grant_type', 'authorization_code');
+
+    // Exchange the authorization code for tokens
+    const response = await axios.post(
+      'https://oauth2.googleapis.com/token',
+      formData.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Google token exchange error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error_description || 'Failed to exchange token'
+    });
+  }
+});
+
+// Create Google Calendar event
+router.post('/google-calendar-event', async (req, res) => {
+  try {
+    const { accessToken, event } = req.body;
+
+    if (!accessToken || !event) {
+      return res.status(400).json({ error: 'Access token and event details are required' });
+    }
+
+    const response = await axios.post(
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+      event,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error creating Google Calendar event:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || 'Failed to create calendar event'
     });
   }
 });
