@@ -404,7 +404,7 @@ const generateTokens = (user) => {
           fullName: user.fullName
         }, 
         process.env.JWT_SECRET, 
-        { expiresIn: '1m' } // 1 minute for access token
+        { expiresIn: '15m' } // 15 minutes for access token
       );
       safeLog('Access token generated');
     } catch (tokenError) {
@@ -418,7 +418,7 @@ const generateTokens = (user) => {
       refreshToken = jwt.sign(
         { userId: user._id.toString() },
         process.env.JWT_REFRESH_SECRET,
-        { expiresIn: '7d' } // 7 days for refresh token
+        { expiresIn: '30d' } // 30 days for refresh token
       );
       safeLog('Refresh token generated');
     } catch (refreshError) {
@@ -472,13 +472,13 @@ const setAuthCookies = (res, { token, refreshToken }) => {
     }
   });
 
-  // Set access token cookie (2 hours)
+  // Set access token cookie (15 minutes)
   res.cookie('token', token, {
     httpOnly: false, // Allow JavaScript access for client-side auth
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/',
-    maxAge: 2 * 60 * 60 * 1000 // 2 hours
+    maxAge: 15 * 60 * 1000 // 15 minutes
   });
 
   // Set refresh token cookie (30 days)
@@ -599,10 +599,10 @@ router.post('/refresh-token', refreshTokenLimiter, async (req, res) => {
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
       path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     };
 
-    res.cookie('token', newToken, { ...cookieOptions, maxAge: 60 * 1000 }); // 1 minute
+    res.cookie('token', newToken, { ...cookieOptions, maxAge: 15 * 60 * 1000 }); // 15 minutes
     res.cookie('refreshToken', newRefreshToken, cookieOptions);
 
     // Log successful token refresh
@@ -1145,7 +1145,7 @@ router.put('/update-profile', async (req, res) => {
         fullName: user.fullName
       }, 
       process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
+      { expiresIn: '15m' } // 15 minutes
     );
 
     // Explicitly include all fields in the response
@@ -1253,7 +1253,7 @@ router.get('/profile', async (req, res) => {
         fullName: user.fullName
       }, 
       process.env.JWT_SECRET, 
-      { expiresIn: '2h' }
+      { expiresIn: '15m' } // 15 minutes
     );
 
     // Return user profile with new token
@@ -1333,7 +1333,7 @@ router.put('/set-onboard-date', async (req, res) => {
         fullName: user.fullName
       }, 
       process.env.JWT_SECRET, 
-      { expiresIn: '1h' }
+      { expiresIn: '15m' } // 15 minutes
     );
 
     res.json({ 
