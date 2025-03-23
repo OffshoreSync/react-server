@@ -8,9 +8,15 @@
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "offshore",
+    "scheduling",
+    "calendar",
+    "work-management",
+    "mern-stack"
+  ],
+  "author": "OffshoreSync Team",
+  "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-ses": "^3.743.0",
     "@aws-sdk/credential-providers": "^3.743.0",
