@@ -2120,27 +2120,150 @@ router.post('/google-token-exchange', async (req, res) => {
   }
 });
 
-// Create Google Calendar event
+// Create Google Calendar event with attendees
 router.post('/google-calendar-event', async (req, res) => {
   try {
-    const { accessToken, event } = req.body;
+    const { accessToken, event, attendeeIds } = req.body;
+    const token = req.headers.authorization?.split(' ')[1];
 
     if (!accessToken || !event) {
       return res.status(400).json({ error: 'Access token and event details are required' });
     }
 
-    const response = await axios.post(
-      'https://www.googleapis.com/calendar/v3/calendars/primary/events',
-      event,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    // Get the current user's ID from the JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
 
-    res.json(response.data);
+    // Get the current user's email
+    const currentUser = await User.findById(currentUserId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get attendee emails from friend IDs
+    let attendees = [];
+    safeLog('Calendar event creation - received data:', {
+      attendeeIds: redactSensitiveData(attendeeIds),
+      currentUserId: redactSensitiveData(currentUserId),
+      currentUserEmail: redactSensitiveData(currentUser.email)
+    });
+
+    if (attendeeIds && attendeeIds.length > 0) {
+      // Find friends with mutual sync enabled using Friend model
+      const Friend = require('../models/Friend');
+
+      // Find friend relationships where both users have enabled sharing
+      const friendships = await Friend.find({
+        $or: [
+          // Current user is the 'user', friend is in attendeeIds
+          {
+            user: currentUserId,
+            friend: { $in: attendeeIds },
+            status: 'ACCEPTED',
+            'sharingPreferences.allowScheduleSync': true,
+            'friendSharingPreferences.allowScheduleSync': true
+          },
+          // Current user is the 'friend', user is in attendeeIds
+          {
+            friend: currentUserId,
+            user: { $in: attendeeIds },
+            status: 'ACCEPTED',
+            'friendSharingPreferences.allowScheduleSync': true,
+            'sharingPreferences.allowScheduleSync': true
+          }
+        ]
+      }).populate('user friend', 'email');
+
+      safeLog('Calendar event creation - found friendships:', 
+        redactSensitiveData(friendships.map(f => ({
+          id: f._id,
+          userEmail: f.user.email,
+          friendEmail: f.friend.email,
+          status: f.status,
+          sharingPreferences: f.sharingPreferences,
+          friendSharingPreferences: f.friendSharingPreferences
+        })))
+      );
+
+      // Extract friend emails from the relationships
+      const friendEmails = friendships.map(friendship => {
+        const friendEmail = friendship.user._id.toString() === currentUserId ?
+          friendship.friend.email : friendship.user.email;
+        return {
+          email: friendEmail,
+          responseStatus: 'needsAction'
+        };
+      });
+
+      attendees = friendEmails;
+      safeLog('Calendar event creation - attendees list:', redactSensitiveData(attendees));
+    }
+
+    // Add attendees to the event
+    const eventWithAttendees = {
+      ...event,
+      // Ensure creator and organizer are set
+      creator: {
+        email: currentUser.email,
+        self: true
+      },
+      organizer: {
+        email: currentUser.email,
+        self: true
+      },
+      // Add all attendees including the creator
+      attendees: [
+        {
+          email: currentUser.email,
+          responseStatus: 'accepted',
+          organizer: true,
+          self: true
+        },
+        ...attendees
+      ],
+      // Ensure reminders are enabled
+      reminders: {
+        useDefault: true
+      }
+    };
+
+    // Add sendUpdates parameter and ensure proper event configuration
+    const finalEvent = {
+      ...eventWithAttendees,
+      guestsCanSeeOtherGuests: true,
+      guestsCanModify: false,
+      guestsCanInviteOthers: false
+    };
+
+    safeLog('Calendar event creation - final event:', redactSensitiveData(finalEvent));
+
+    // Make API call to create event and send notifications
+    try {
+      const response = await axios.post(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+        finalEvent,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          params: {
+            sendUpdates: 'all',  // Ensures notifications are sent to all attendees
+            supportsAttachments: false,
+            conferenceDataVersion: 0
+          },
+          timeout: 30000  // Increase timeout to 30 seconds
+        }
+      );
+      
+      safeLog('Calendar event creation - Google Calendar API response:', redactSensitiveData(response.data));
+      res.json(response.data);
+    } catch (error) {
+      safeLog('Calendar event creation - Google Calendar API error:', redactSensitiveData(error.response?.data || error.message), 'error');
+      res.status(error.response?.status || 500).json({
+        error: error.response?.data?.error || error.message
+      });
+    }
   } catch (error) {
     console.error('Error creating Google Calendar event:', error.response?.data || error.message);
     res.status(error.response?.status || 500).json({
