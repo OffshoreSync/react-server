@@ -1299,11 +1299,26 @@ router.put('/set-onboard-date', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Get on board date from request
-    const { nextOnBoardDate } = req.body;
+    // Get on board date and past date flag from request
+    const { nextOnBoardDate, allowPastDates = false } = req.body;
 
     if (!nextOnBoardDate) {
       return res.status(400).json({ message: 'Next on board date is required' });
+    }
+
+    // Validate date
+    const onBoardDate = new Date(nextOnBoardDate);
+    if (isNaN(onBoardDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid date provided' });
+    }
+
+    // Check if past dates are allowed
+    const now = new Date();
+    if (!allowPastDates && onBoardDate < now) {
+      return res.status(400).json({ 
+        message: 'Past dates are not allowed. Use allowPastDates flag to override.',
+        currentDate: now.toISOString()
+      });
     }
 
     // Ensure working regime is set
@@ -1311,7 +1326,6 @@ router.put('/set-onboard-date', async (req, res) => {
     const offDutyDays = user.workingRegime?.offDutyDays || 14;
 
     // Calculate off board date based on current working regime
-    const onBoardDate = new Date(nextOnBoardDate);
     const offBoardDate = new Date(onBoardDate);
     offBoardDate.setDate(offBoardDate.getDate() + onDutyDays);
 
