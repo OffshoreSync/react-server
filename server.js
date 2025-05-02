@@ -96,8 +96,22 @@ const csrfProtection = (req, res, next) => {
 };
 
 // CORS configuration
+const allowedOrigins = [
+  process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost',
+  null // allow null origin for service workers
+];
+
 app.use(cors({
-  origin: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
