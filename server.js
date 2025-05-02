@@ -108,9 +108,16 @@ app.use(cors({
     'X-CSRF-Token',
     'Accept',
     'Origin',
-    'Cookie'
+    'Cookie',
+    'Service-Worker-Allowed' // Add support for service worker
   ],
-  exposedHeaders: ['X-CSRF-Token', 'Set-Cookie'],
+  exposedHeaders: [
+    'X-CSRF-Token', 
+    'Set-Cookie',
+    'Cache-Control',  // Expose cache control headers
+    'ETag',          // Expose ETag for caching
+    'Last-Modified'  // Expose last modified for caching
+  ],
   maxAge: 86400 // 24 hours
 }));
 
