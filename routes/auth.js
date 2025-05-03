@@ -541,6 +541,13 @@ router.post('/refresh-token', refreshTokenLimiter, async (req, res) => {
       return res.status(400).json({ message: 'Refresh token is required' });
     }
 
+    // Log the refresh token attempt (first few characters only for security)
+    safeLog('Refresh token attempt', { 
+      tokenFirstChars: refreshToken.substring(0, 10) + '...',
+      ip: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+
     // Verify refresh token
     let decoded;
     try {
@@ -548,7 +555,9 @@ router.post('/refresh-token', refreshTokenLimiter, async (req, res) => {
     } catch (jwtError) {
       safeLog('Invalid refresh token', { 
         error: jwtError.message,
-        ip: req.ip 
+        name: jwtError.name,
+        ip: req.ip,
+        userAgent: req.headers['user-agent']
       }, 'warn');
       return res.status(401).json({ 
         message: 'Invalid refresh token',
@@ -561,26 +570,57 @@ router.post('/refresh-token', refreshTokenLimiter, async (req, res) => {
     if (!user) {
       safeLog('User not found during token refresh', { 
         userId: decoded.userId,
-        ip: req.ip 
+        ip: req.ip,
+        userAgent: req.headers['user-agent']
       }, 'warn');
       return res.status(404).json({ message: 'User not found' });
     }
 
-    const storedToken = user.refreshTokens?.find(t => 
-      t.token === refreshToken && 
-      !t.isRevoked && 
-      t.expiresAt > new Date()
-    );
-
-    if (!storedToken) {
-      safeLog('Invalid or expired refresh token', { 
+    // Check if user has any refresh tokens at all
+    if (!user.refreshTokens || user.refreshTokens.length === 0) {
+      safeLog('User has no refresh tokens', {
         userId: user._id,
         ip: req.ip,
-        tokenFound: !!user.refreshTokens?.find(t => t.token === refreshToken),
-        tokenRevoked: user.refreshTokens?.find(t => t.token === refreshToken)?.isRevoked,
-        tokenExpired: user.refreshTokens?.find(t => t.token === refreshToken)?.expiresAt < new Date()
+        userAgent: req.headers['user-agent']
       }, 'warn');
-      return res.status(401).json({ message: 'Invalid or expired refresh token' });
+      return res.status(401).json({ message: 'No refresh tokens found for user' });
+    }
+
+    // Find the specific token in the user's tokens array
+    const storedToken = user.refreshTokens.find(t => t.token === refreshToken);
+    
+    // First check if token exists at all
+    if (!storedToken) {
+      safeLog('Refresh token not found in user records', { 
+        userId: user._id,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        tokenCount: user.refreshTokens.length
+      }, 'warn');
+      return res.status(401).json({ message: 'Refresh token not found', error: 'token_not_found' });
+    }
+    
+    // Then check if token is revoked
+    if (storedToken.isRevoked) {
+      safeLog('Attempted to use revoked refresh token', { 
+        userId: user._id,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        revokedAt: storedToken.revokedAt
+      }, 'warn');
+      return res.status(401).json({ message: 'Refresh token has been revoked', error: 'token_revoked' });
+    }
+    
+    // Finally check if token is expired
+    if (storedToken.expiresAt < new Date()) {
+      safeLog('Attempted to use expired refresh token', { 
+        userId: user._id,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        expiresAt: storedToken.expiresAt,
+        currentTime: new Date()
+      }, 'warn');
+      return res.status(401).json({ message: 'Refresh token has expired', error: 'token_expired' });
     }
 
     // Generate new tokens
