@@ -1221,6 +1221,7 @@ router.put('/update-profile', async (req, res) => {
 });
 
 // Get User Profile
+// Supports nocache parameter to bypass any caching and get fresh data
 router.get('/profile', async (req, res) => {
   try {
     // Get token from headers
@@ -1276,8 +1277,26 @@ router.get('/profile', async (req, res) => {
       });
     }
 
-    // Find user
-    const user = await User.findById(decoded.userId);
+    // Check if nocache parameter is present to bypass any caching
+    const bypassCache = req.query.nocache !== undefined;
+
+    // Log cache status for debugging
+    safeLog('Profile request cache status:', {
+      bypassCache,
+      nocacheParam: req.query.nocache
+    });
+
+    // Find user with a fresh database query when nocache is present
+    let user;
+    if (bypassCache) {
+      // Force a fresh query by using findOne with lean() to get a plain JS object
+      // This bypasses any potential mongoose document caching
+      user = await User.findOne({ _id: decoded.userId }).lean();
+      safeLog('Profile fetch using fresh query due to nocache parameter');
+    } else {
+      // Standard query when no cache bypass is requested
+      user = await User.findById(decoded.userId);
+    }
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -1375,136 +1394,12 @@ router.put('/set-onboard-date', async (req, res) => {
       nextOffBoardDate: offBoardDate
     };
 
-    // Save updated user
-    await user.save();
-
-    // Generate new token with updated information
-    const newToken = jwt.sign(
-      { 
-        userId: user._id, 
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '15m' } // 15 minutes
-    );
-
-    res.json({ 
-      message: 'On board date updated successfully', 
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        offshoreRole: user.offshoreRole,
-        company: user.company || null,
-        workSchedule: {
-          nextOnBoardDate: user.workSchedule.nextOnBoardDate,
-          nextOffBoardDate: user.workSchedule.nextOffBoardDate
-        },
-        workingRegime: user.workingRegime,
-        unitName: user.unitName || null,
-        country: user.country || null,
-        isGoogleUser: user.isGoogleUser
-      },
-      token: newToken
-    });
-  } catch (error) {
-    safeLog('Set on board date error:', redactSensitiveData(error), 'error');
-    res.status(500).json({ message: 'Server error during on board date update', error: error.message });
-  }
-});
-
-// Reset Work Schedule and Prepare for New Onboarding
-router.put('/reset-next-onboard-date', async (req, res) => {
-  try {
-    // Get token from headers
-    const token = req.headers.authorization?.split(' ')[1];
-
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    // Verify token
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ message: 'Invalid or expired token' });
-    }
-
-    // Find the user
-    const user = await User.findById(decoded.userId);
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Reset work schedule details
-    user.workSchedule = {
-      nextOnBoardDate: null,
-      nextOffBoardDate: null
-    };
-
-    // Save the updated user
-    await user.save();
-
-    res.json({ 
-      message: 'Work schedule reset successfully',
-      workSchedule: user.workSchedule 
-    });
-  } catch (error) {
-    safeLog('Error resetting work schedule:', redactSensitiveData(error), 'error');
-    res.status(500).json({ 
-      message: 'Server error while resetting work schedule',
-      error: error.message 
-    });
-  }
-});
-
-// Generate and save work cycles for a user
-router.post('/generate-work-cycles', async (req, res) => {
-  try {
-    // Get token from headers
-    const token = req.headers.authorization?.split(' ')[1];
-
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    // Verify token
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      if (error.name === 'TokenExpiredError') {
-        return res.status(401).json({ 
-          message: 'Token expired', 
-          error: 'TokenExpiredError',
-          requiresReAuthentication: true 
-        });
-      }
-      throw error;
-    }
-
-    // Find the user and populate all necessary fields
-    const user = await User.findById(decoded.userId);
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Get working regime from user
-    const { onDutyDays, offDutyDays } = user.workingRegime;
-
-    // Prepare work cycles
+    // Generate work cycles based on the new onboard date
     const workCycles = [];
-    const nextOnBoardDate = new Date(user.workSchedule.nextOnBoardDate);
-    const twoYearsFromNow = new Date(nextOnBoardDate);
+    const twoYearsFromNow = new Date(onBoardDate);
     twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
 
-    let currentDate = nextOnBoardDate;
+    let currentDate = new Date(onBoardDate);
     let cycleNumber = 1;
 
     while (currentDate < twoYearsFromNow) {
@@ -1553,54 +1448,97 @@ router.post('/generate-work-cycles', async (req, res) => {
       cycleNumber++;
     }
 
-    // Use findOneAndUpdate to atomically update work cycles
-    try {
-      const updatedUser = await User.findOneAndUpdate(
-        { _id: user._id },
-        { 
-          $set: { 
-            workCycles: workCycles 
-          } 
+    // Update user's work cycles
+    user.workCycles = workCycles;
+
+    // Save updated user
+    await user.save();
+
+    // Generate new token with updated information
+    const newToken = jwt.sign(
+      { 
+        userId: user._id, 
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '15m' } // 15 minutes
+    );
+
+    res.json({ 
+      message: 'On board date updated successfully', 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        offshoreRole: user.offshoreRole,
+        company: user.company || null,
+        workSchedule: {
+          nextOnBoardDate: user.workSchedule.nextOnBoardDate,
+          nextOffBoardDate: user.workSchedule.nextOffBoardDate
         },
-        { 
-          new: true,  // Return the modified document
-          runValidators: true  // Run model validations
-        }
-      );
-
-      if (!updatedUser) {
-        throw new Error('User not found or could not update work cycles');
-      }
-
-      // Prepare response with full user data
-      const userResponse = {
-        _id: updatedUser._id,
-        username: updatedUser.username,
-        email: updatedUser.email,
-        fullName: updatedUser.fullName,
-        workSchedule: updatedUser.workSchedule,
-        workingRegime: updatedUser.workingRegime,
-        workCycles: updatedUser.workCycles,
-        isGoogleUser: updatedUser.isGoogleUser
-      };
-
-      res.status(200).json({ 
-        message: 'Work cycles generated successfully',
-        user: userResponse,
-        workCycles: updatedUser.workCycles
-      });
-
-    } catch (error) {
-      safeLog('Error generating work cycles:', redactSensitiveData(error), 'error');
-      res.status(500).json({ 
-        message: 'Server error while generating work cycles',
-        error: error.message 
-      });
-    }
+        workingRegime: user.workingRegime,
+        workCycles: user.workCycles,
+        unitName: user.unitName || null,
+        country: user.country || null,
+        isGoogleUser: user.isGoogleUser
+      },
+      token: newToken
+    });
   } catch (error) {
-    safeLog('Error generating work cycles:', redactSensitiveData(error), 'error');
+    safeLog('Set on board date error:', redactSensitiveData(error), 'error');
+    res.status(500).json({ message: 'Server error during on board date update', error: error.message });
+  }
+});
+
+// Reset Work Schedule and Prepare for New Onboarding
+router.put('/reset-next-onboard-date', async (req, res) => {
+  try {
+    // Get token from headers
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ message: 'No token provided' });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+
+    // Find the user
+    const user = await User.findById(decoded.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Reset work schedule details
+    user.workSchedule = {
+      nextOnBoardDate: null,
+      nextOffBoardDate: null
+    };
+    
+    // Clear work cycles as they are no longer valid without a nextOnBoardDate
+    user.workCycles = [];
+
+    // Save the updated user
+    await user.save();
+
+    res.json({ 
+      message: 'Work schedule reset successfully',
+      workSchedule: user.workSchedule,
+      workCycles: user.workCycles
+    });
+  } catch (error) {
+    safeLog('Error resetting work schedule:', redactSensitiveData(error), 'error');
     res.status(500).json({ 
-      message: 'Server error while generating work cycles',
+      message: 'Server error while resetting work schedule',
       error: error.message 
     });
   }
