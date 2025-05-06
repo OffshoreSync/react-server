@@ -104,13 +104,34 @@ const allowedOrigins = [
   null // allow null origin for service workers
 ];
 
+// Regular expressions for local network IP addresses (for mobile testing)
+const localNetworkRegexes = [
+  /^https?:\/\/192\.168\.[0-9]{1,3}\.[0-9]{1,3}(:[0-9]+)?$/,
+  /^https?:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]{1,3}\.[0-9]{1,3}(:[0-9]+)?$/,
+  /^https?:\/\/10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(:[0-9]+)?$/
+];
+
 app.use(cors({
   origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl requests)
     if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     }
+    
+    // Only allow flexible origin checking in development mode
+    if (process.env.NODE_ENV !== 'production') {
+      // Check if origin matches any of the regex patterns (for local IP addresses)
+      for (const pattern of localNetworkRegexes) {
+        if (pattern.test(origin)) {
+          safeLog(`Development mode - allowing CORS for local network: ${origin}`);
+          return callback(null, true);
+        }
+      }
+    }
+    
+    // Log the rejected origin for debugging
+    safeLog(`CORS rejected origin: ${origin}`);
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
