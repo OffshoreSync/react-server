@@ -46,6 +46,8 @@ const csrfProtection = (req, res, next) => {
   // Completely exempt routes (minimal set)
   const exemptRoutes = [
     '/api/auth/google-login',
+    '/api/auth/google-login-with-calendar',
+    '/api/auth/google-calendar-token',
     '/api/auth/check-session',
     '/api/csrf-token',
     '/api/auth/register',

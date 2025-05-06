@@ -136,6 +136,18 @@ const UserSchema = new mongoose.Schema({
   profilePicture: {
     type: String
   },
+  googleCalendarToken: {
+    type: String,
+    default: null
+  },
+  googleCalendarRefreshToken: {
+    type: String,
+    default: null
+  },
+  googleCalendarTokenExpiry: {
+    type: Date,
+    default: null
+  },
   isVerified: {
     type: Boolean,
     default: false

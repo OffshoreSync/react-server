@@ -1034,6 +1034,235 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
   }
 });
 
+// Google login with calendar scope
+router.post('/google-login-with-calendar', async (req, res) => {
+  try {
+    const { code } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({ message: 'Authorization code is required' });
+    }
+    
+    safeLog('Received Google auth code for login with calendar scope');
+    
+    // Exchange the authorization code for tokens
+    const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+      code,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000',
+      grant_type: 'authorization_code'
+    });
+    
+    // Get access and refresh tokens
+    const { access_token, refresh_token, id_token } = tokenResponse.data;
+    
+    if (!access_token || !id_token) {
+      return res.status(400).json({ message: 'Failed to obtain Google tokens' });
+    }
+    
+    // Get user info using the access token
+    const userInfoResponse = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+    
+    const googleUserInfo = userInfoResponse.data;
+    
+    if (!googleUserInfo.email) {
+      return res.status(400).json({ message: 'Failed to obtain user email from Google' });
+    }
+    
+    safeLog(`Google user info retrieved for: ${googleUserInfo.email}`);
+    
+    // Check if user exists
+    let user = await User.findOne({ email: googleUserInfo.email });
+    
+    if (user) {
+      // Update existing user with Google info if needed
+      if (!user.isGoogleUser) {
+        user.isGoogleUser = true;
+        user.googleId = googleUserInfo.sub;
+        user.isVerified = true;
+        
+        // Store Google Calendar token information
+        user.googleCalendarToken = access_token;
+        user.googleCalendarRefreshToken = refresh_token;
+        user.googleCalendarTokenExpiry = new Date(Date.now() + tokenResponse.data.expires_in * 1000);
+        
+        await user.save();
+        safeLog(`Updated existing user with Google Calendar info: ${user.email}`);
+      } else {
+        // Update Google Calendar token information
+        user.googleCalendarToken = access_token;
+        if (refresh_token) {
+          user.googleCalendarRefreshToken = refresh_token;
+        }
+        user.googleCalendarTokenExpiry = new Date(Date.now() + tokenResponse.data.expires_in * 1000);
+        await user.save();
+        safeLog(`Updated Google Calendar tokens for existing user: ${user.email}`);
+      }
+    } else {
+      // Create new user with Google info
+      // Note: We'll need to collect additional required information later
+      return res.status(400).json({
+        message: 'User not found. Please register first.',
+        googleUserInfo: {
+          email: googleUserInfo.email,
+          name: googleUserInfo.name,
+          picture: googleUserInfo.picture
+        }
+      });
+    }
+    
+    // Generate tokens for authentication
+    const { token, refreshToken } = generateTokens(user);
+    
+    // Store refresh token
+    await storeRefreshToken(user, refreshToken);
+    
+    // Return tokens and user data
+    res.json({
+      token,
+      refreshToken,
+      user: createUserResponse(user)
+    });
+    
+  } catch (error) {
+    safeLog('Google login with calendar scope error:', {
+      name: error.name,
+      message: error.message,
+      response: error.response?.data
+    });
+    
+    res.status(500).json({
+      message: 'Error during Google authentication with calendar scope',
+      error: error.message
+    });
+  }
+});
+
+// Get Google Calendar token for authenticated users
+router.post('/google-calendar-token', async (req, res) => {
+  try {
+    // Get token from headers, body, or cookies (in that order of preference)
+    let token = req.headers.authorization?.split(' ')[1] || 
+                req.body.token || 
+                req.cookies.token || 
+                req.cookies.token_pwa;
+    
+    if (!token) {
+      console.error('Google Calendar token request missing token', {
+        hasAuthHeader: !!req.headers.authorization,
+        hasBodyToken: !!req.body.token,
+        hasCookieToken: !!req.cookies.token,
+        hasPwaCookieToken: !!req.cookies.token_pwa
+      });
+      return res.status(401).json({ message: 'No token provided' });
+    }
+    
+    console.log('Processing Google Calendar token request with token', {
+      tokenLength: token.length,
+      tokenFirstChars: token.substring(0, 20) + '...'
+    });
+    
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+    
+    // Get user from database
+    const user = await User.findById(decoded.id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Check if user has Google Calendar token
+    if (!user.googleCalendarToken) {
+      return res.status(404).json({ message: 'No Google Calendar token found' });
+    }
+    
+    // Check if token is expired
+    const isTokenExpired = user.googleCalendarTokenExpiry && new Date() > new Date(user.googleCalendarTokenExpiry);
+    
+    if (isTokenExpired && user.googleCalendarRefreshToken) {
+      try {
+        // Refresh the token
+        const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET,
+          refresh_token: user.googleCalendarRefreshToken,
+          grant_type: 'refresh_token'
+        });
+        
+        // Update user with new token
+        user.googleCalendarToken = tokenResponse.data.access_token;
+        user.googleCalendarTokenExpiry = new Date(Date.now() + tokenResponse.data.expires_in * 1000);
+        await user.save();
+        
+        // Return the new token
+        return res.json({
+          access_token: user.googleCalendarToken,
+          expires_in: Math.floor((new Date(user.googleCalendarTokenExpiry) - new Date()) / 1000)
+        });
+      } catch (error) {
+        console.error('Error refreshing Google token:', error.response?.data || error.message);
+        return res.status(401).json({ message: 'Failed to refresh Google token' });
+      }
+    }
+    
+    // Return the token
+    return res.json({
+      access_token: user.googleCalendarToken,
+      expires_in: user.googleCalendarTokenExpiry ? 
+        Math.floor((new Date(user.googleCalendarTokenExpiry) - new Date()) / 1000) : 
+        3600 // Default 1 hour if no expiry is set
+    });
+    
+  } catch (error) {
+    console.error('Error getting Google Calendar token:', error);
+    res.status(500).json({
+      message: 'Error retrieving Google Calendar token',
+      error: error.message
+    });
+  }
+});
+
+// Google token exchange for calendar access (original endpoint)
+router.post('/google-token-exchange', async (req, res) => {
+  try {
+    const { code } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({ message: 'Authorization code is required' });
+    }
+    
+    // Exchange the authorization code for tokens
+    const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
+      code,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000',
+      grant_type: 'authorization_code'
+    });
+    
+    res.json({
+      access_token: tokenResponse.data.access_token,
+      expires_in: tokenResponse.data.expires_in
+    });
+    
+  } catch (error) {
+    console.error('Google token exchange error:', error.response?.data || error.message);
+    res.status(500).json({
+      message: 'Error exchanging Google authorization code',
+      error: error.response?.data?.error || error.message
+    });
+  }
+});
+
 // Delete user account
 router.delete('/delete-account', async (req, res) => {
   try {
@@ -2062,55 +2291,7 @@ router.put('/friend-sync/:friendId', async (req, res) => {
   }
 });
 
-// Google OAuth token exchange
-router.post('/google-token-exchange', async (req, res) => {
-  try {
-    const { code } = req.body;
-    
-    if (!code) {
-      return res.status(400).json({ error: 'Authorization code is required' });
-    }
-
-    // Verify required environment variables
-    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-      console.error('Missing required Google OAuth environment variables');
-      return res.status(500).json({ error: 'Server configuration error' });
-    }
-
-    console.log('Attempting token exchange with params:', {
-      clientIdPresent: !!process.env.GOOGLE_CLIENT_ID,
-      clientSecretPresent: !!process.env.GOOGLE_CLIENT_SECRET,
-      redirectUri: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
-      codeLength: code.length
-    });
-
-    // Create form data for token exchange
-    const formData = new URLSearchParams();
-    formData.append('code', code);
-    formData.append('client_id', process.env.GOOGLE_CLIENT_ID);
-    formData.append('client_secret', process.env.GOOGLE_CLIENT_SECRET);
-    formData.append('redirect_uri', process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000');
-    formData.append('grant_type', 'authorization_code');
-
-    // Exchange the authorization code for tokens
-    const response = await axios.post(
-      'https://oauth2.googleapis.com/token',
-      formData.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
-    );
-
-    res.json(response.data);
-  } catch (error) {
-    console.error('Google token exchange error:', error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data?.error_description || 'Failed to exchange token'
-    });
-  }
-});
+// Note: The Google token exchange endpoint is now consolidated at line ~1220
 
 // Create Google Calendar event with attendees
 router.post('/google-calendar-event', async (req, res) => {
