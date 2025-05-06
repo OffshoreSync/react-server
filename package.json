@@ -1,6 +1,6 @@
 {
   "name": "offshore-sync-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Backend server for MERN application",
   "main": "server.js",
   "scripts": {
