@@ -1050,7 +1050,7 @@ router.post('/google-login-with-calendar', async (req, res) => {
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000',
+      redirect_uri: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
       grant_type: 'authorization_code'
     });
     
@@ -1245,7 +1245,7 @@ router.post('/google-token-exchange', async (req, res) => {
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000',
+      redirect_uri: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
       grant_type: 'authorization_code'
     });
     
