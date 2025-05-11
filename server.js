@@ -222,6 +222,11 @@ app.get('/', (req, res) => {
   res.send('Welcome to the Offshore Sync Application');
 });
 
+// Home route - serves the same content as root for SEO purposes
+app.get('/home', (req, res) => {
+  res.send('Welcome to the Offshore Sync Application');
+});
+
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app', {
   useNewUrlParser: true,
