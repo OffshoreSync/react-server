@@ -1103,15 +1103,43 @@ router.post('/google-login-with-calendar', async (req, res) => {
       }
     } else {
       // Create new user with Google info
-      // Note: We'll need to collect additional required information later
-      return res.status(400).json({
-        message: 'User not found. Please register first.',
-        googleUserInfo: {
-          email: googleUserInfo.email,
-          name: googleUserInfo.name,
-          picture: googleUserInfo.picture
-        }
+      safeLog('Creating new user for Google login with calendar scope');
+      const username = googleUserInfo.email.split('@')[0];
+      user = new User({
+        email: googleUserInfo.email,
+        username,
+        fullName: googleUserInfo.name,
+        isGoogleUser: true,
+        googleId: googleUserInfo.sub,
+        profilePicture: googleUserInfo.picture,
+        isVerified: true,
+        country: 'US', // Default country code: US
+        offshoreRole: 'Support', // Default role: Support
+        workingRegime: {
+          onDutyDays: 28,
+          offDutyDays: 28
+        },
+        // Store Google Calendar token information
+        googleCalendarToken: access_token,
+        googleCalendarRefreshToken: refresh_token,
+        googleCalendarTokenExpiry: new Date(Date.now() + tokenResponse.data.expires_in * 1000)
       });
+      
+      try {
+        await user.save();
+        safeLog('New Google user created successfully with calendar scope');
+      } catch (saveError) {
+        safeLog('Error saving new Google user:', saveError);
+        // Check if username already exists
+        if (saveError.code === 11000) {
+          // Try with a unique username
+          user.username = `${username}_${Math.random().toString(36).substr(2, 5)}`;
+          await user.save();
+          safeLog('Saved user with modified username');
+        } else {
+          throw saveError;
+        }
+      }
     }
     
     // Generate tokens for authentication
