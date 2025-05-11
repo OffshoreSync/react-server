@@ -442,13 +442,22 @@ const storeRefreshToken = async (user, refreshToken) => {
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 30);
 
-  // Add refresh token to user's tokens array
+  // Initialize refreshTokens array if it doesn't exist
   user.refreshTokens = user.refreshTokens || [];
-  user.refreshTokens.push({
-    token: refreshToken,
-    expiresAt,
-    isRevoked: false
-  });
+  
+  // Check if this exact token already exists
+  const tokenExists = user.refreshTokens.some(existingToken => 
+    existingToken.token === refreshToken && !existingToken.isRevoked
+  );
+  
+  // Only add the token if it doesn't already exist
+  if (!tokenExists) {
+    user.refreshTokens.push({
+      token: refreshToken,
+      expiresAt,
+      isRevoked: false
+    });
+  }
 
   // Remove expired tokens
   user.refreshTokens = user.refreshTokens.filter(token => 
