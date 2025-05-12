@@ -56,7 +56,8 @@ const csrfProtection = (req, res, next) => {
     '/api/password/request',
     '/api/password/request-reset',
     '/api/password/reset',
-    '/api/password/verify-token'
+    '/api/password/verify-token',
+    '/api/verify-email'
   ];
 
   if (exemptRoutes.some(route => req.path.startsWith(route))) {
