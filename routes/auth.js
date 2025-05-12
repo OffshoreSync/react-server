@@ -2016,9 +2016,12 @@ router.put('/friend-request/:requestId', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const currentUserId = decoded.userId;
-
-    const { status } = req.body; // 'ACCEPTED' or 'BLOCKED'
     const { requestId } = req.params;
+    const { status } = req.body;
+
+    if (!['ACCEPTED', 'DECLINED'].includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
+    }
 
     const friendRequest = await Friend.findOneAndUpdate(
       { 
@@ -2026,10 +2029,7 @@ router.put('/friend-request/:requestId', async (req, res) => {
         friend: currentUserId,
         status: 'PENDING'
       },
-      { 
-        status,
-        'sharingPreferences.allowScheduleSync': status === 'ACCEPTED'
-      },
+      { status },
       { new: true }
     );
 
@@ -2037,9 +2037,29 @@ router.put('/friend-request/:requestId', async (req, res) => {
       return res.status(404).json({ message: 'Friend request not found' });
     }
 
+    // If the request was accepted, return the friend data for immediate UI update
+    let friendData = null;
+    if (status === 'ACCEPTED') {
+      // Get the requester's user data to return to the client
+      const friendUser = await User.findById(friendRequest.user);
+      if (friendUser) {
+        friendData = {
+          _id: friendUser._id,
+          id: friendUser._id, // Include both formats for compatibility
+          fullName: friendUser.fullName,
+          email: friendUser.email,
+          profilePicture: friendUser.profilePicture,
+          company: friendUser.company || '',
+          unitName: friendUser.unitName || '',
+          sharingPreferences: friendRequest.sharingPreferences || { allowScheduleSync: false }
+        };
+      }
+    }
+
     res.status(200).json({ 
       message: 'Friend request updated', 
-      status: friendRequest.status 
+      status: friendRequest.status,
+      friendData
     });
 
   } catch (error) {
@@ -2132,6 +2152,78 @@ router.get('/friend-requests', async (req, res) => {
   } catch (error) {
     safeLog('Get pending requests error:', redactSensitiveData(error), 'error');
     res.status(500).json({ message: 'Server error retrieving pending requests' });
+  }
+});
+
+// Block Friend
+router.put('/friend/block/:friendId', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+    const { friendId } = req.params;
+    
+    if (!friendId) {
+      return res.status(400).json({ message: 'Friend ID is required' });
+    }
+
+    // Find the friendship (in either direction)
+    const friendship = await Friend.findOne({
+      $or: [
+        { user: currentUserId, friend: friendId },
+        { user: friendId, friend: currentUserId }
+      ]
+    });
+
+    if (!friendship) {
+      return res.status(404).json({ message: 'Friendship not found' });
+    }
+
+    // Update the status to BLOCKED
+    friendship.status = 'BLOCKED';
+    await friendship.save();
+
+    res.status(200).json({ 
+      message: 'Friend has been blocked', 
+      friendshipId: friendship._id 
+    });
+  } catch (error) {
+    safeLog('Block friend error:', redactSensitiveData(error), 'error');
+    res.status(500).json({ message: 'Server error blocking friend' });
+  }
+});
+
+// Remove Friend
+router.delete('/friend/:friendId', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const currentUserId = decoded.userId;
+    const { friendId } = req.params;
+    
+    if (!friendId) {
+      return res.status(400).json({ message: 'Friend ID is required' });
+    }
+
+    // Find and remove the friendship (in either direction)
+    const result = await Friend.findOneAndDelete({
+      $or: [
+        { user: currentUserId, friend: friendId },
+        { user: friendId, friend: currentUserId }
+      ]
+    });
+
+    if (!result) {
+      return res.status(404).json({ message: 'Friendship not found' });
+    }
+
+    res.status(200).json({ 
+      message: 'Friend has been removed', 
+      friendshipId: result._id 
+    });
+  } catch (error) {
+    safeLog('Remove friend error:', redactSensitiveData(error), 'error');
+    res.status(500).json({ message: 'Server error removing friend' });
   }
 });
 
