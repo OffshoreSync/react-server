@@ -197,11 +197,72 @@ app.use(csrfProtection);
 const apiRouter = express.Router();
 app.use('/api', apiRouter);
 
+// Import required models and utilities for email verification
+const User = require('./models/User');
+const rateLimit = require('express-rate-limit');
+
+// Rate limiting for email verification
+const emailVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // Limit each IP to 3 email verification attempts per windowMs
+  message: {
+    error: 'Too many email verification attempts, please try again later',
+    translationKey: 'verifyEmail.error.tooManyAttempts'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
 // Mount auth routes
 const authRoutes = require('./routes/auth');
 const passwordResetRoutes = require('./routes/passwordReset');
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/password', passwordResetRoutes);
+
+// Public email verification endpoint
+apiRouter.post('/verify-email', emailVerificationLimiter, async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ 
+        message: 'Verification token is required' 
+      });
+    }
+
+    const user = await User.findOne({
+      verificationToken: token,
+      verificationTokenExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        message: 'Invalid or expired verification token' 
+      });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ 
+        message: 'Email is already verified' 
+      });
+    }
+
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    user.verificationTokenExpires = undefined;
+    await user.save();
+
+    res.json({ 
+      success: true,
+      message: 'Email verified successfully' 
+    });
+  } catch (error) {
+    safeLog('Email verification error:', error, 'error');
+    res.status(500).json({ 
+      message: 'Server error during email verification' 
+    });
+  }
+});
 
 // CSRF token endpoint
 apiRouter.get('/csrf-token', (req, res) => {
