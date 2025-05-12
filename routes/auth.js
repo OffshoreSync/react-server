@@ -2038,6 +2038,13 @@ router.get('/friends', async (req, res) => {
       const myPreferences = isInitiator ? friendship.sharingPreferences : friendship.friendSharingPreferences;
       const theirPreferences = isInitiator ? friendship.friendSharingPreferences : friendship.sharingPreferences;
 
+      // Calculate the effective sync status
+      const myAllowSync = myPreferences?.allowScheduleSync || false;
+      const theirAllowSync = theirPreferences?.allowScheduleSync || false;
+      
+      // For sync to be fully enabled, both users need to have allowScheduleSync set to true
+      const effectiveSyncEnabled = myAllowSync && theirAllowSync;
+      
       return {
         _id: friendData._id,
         fullName: friendData.fullName,
@@ -2046,12 +2053,14 @@ router.get('/friends', async (req, res) => {
         company: friendData.company || '',
         unitName: friendData.unitName || '',
         sharingPreferences: {
-          // Main sync toggle for UI display
-          allowScheduleSync: myPreferences?.allowScheduleSync || false,
+          // Main sync toggle for UI display - this is what the toggle in FriendManagement controls
+          allowScheduleSync: myAllowSync,
           // Whether I've enabled sync to see their schedule
-          iCanSeeTheirSchedule: myPreferences?.allowScheduleSync || false,
+          iCanSeeTheirSchedule: myAllowSync,
           // Whether they've enabled sync to let me see their schedule
-          theyCanSeeMySchedule: theirPreferences?.allowScheduleSync || false
+          theyCanSeeMySchedule: theirAllowSync,
+          // Whether sync is effectively enabled (both sides have enabled it)
+          effectiveSyncEnabled: effectiveSyncEnabled
         }
       };
     });
