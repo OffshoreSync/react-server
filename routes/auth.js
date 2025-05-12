@@ -2542,4 +2542,24 @@ router.post('/google-calendar-event', async (req, res) => {
   }
 });
 
+// Endpoint to check if a username is available
+router.get('/check-username', async (req, res) => {
+  try {
+    const { username } = req.query;
+    
+    if (!username) {
+      return res.status(400).json({ message: 'Username parameter is required' });
+    }
+    
+    // Check if the username exists in the database
+    const existingUser = await User.findOne({ username: username });
+    
+    // Return whether the username is available
+    return res.json({ available: !existingUser });
+  } catch (error) {
+    console.error('Error checking username availability:', error);
+    return res.status(500).json({ message: 'Server error checking username availability' });
+  }
+});
+
 module.exports = router;
