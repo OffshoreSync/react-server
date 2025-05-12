@@ -2071,10 +2071,26 @@ router.get('/friend-requests', async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const currentUserId = decoded.userId;
 
-    // Find pending friend requests for the current user
+    // First, find any users that the current user has blocked
+    const blockedFriendships = await Friend.find({
+      $or: [
+        { user: currentUserId, status: 'BLOCKED' },
+        { friend: currentUserId, status: 'BLOCKED' }
+      ]
+    });
+    
+    // Extract the IDs of blocked users
+    const blockedUserIds = blockedFriendships.map(friendship => 
+      friendship.user.toString() === currentUserId.toString() 
+        ? friendship.friend.toString() 
+        : friendship.user.toString()
+    );
+    
+    // Find pending friend requests for the current user, excluding blocked users
     const pendingRequests = await Friend.find({
       friend: currentUserId,
-      status: 'PENDING'
+      status: 'PENDING',
+      user: { $nin: blockedUserIds } // Exclude requests from blocked users
     }).populate('user', 'fullName email profilePicture company unitName');
 
     const requests = pendingRequests.map(request => ({
