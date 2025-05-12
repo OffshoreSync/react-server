@@ -146,7 +146,10 @@ app.use(cors({
     'Accept',
     'Origin',
     'Cookie',
-    'Service-Worker-Allowed' // Add support for service worker
+    'Service-Worker-Allowed', // Add support for service worker
+    'Cache-Control',          // Allow cache control headers in requests
+    'Pragma',                 // Allow pragma header in requests
+    'Expires'                 // Allow expires header in requests
   ],
   exposedHeaders: [
     'X-CSRF-Token', 
