@@ -1965,7 +1965,26 @@ router.put('/friend-request/:requestId', async (req, res) => {
     if (!['ACCEPTED', 'DECLINED'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
-
+    
+    // For DECLINED status, delete the request instead of updating it
+    if (status === 'DECLINED') {
+      const deletedRequest = await Friend.findOneAndDelete({
+        _id: requestId,
+        friend: currentUserId,
+        status: 'PENDING'
+      });
+      
+      if (!deletedRequest) {
+        return res.status(404).json({ message: 'Friend request not found' });
+      }
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Friend request declined and removed' 
+      });
+    }
+    
+    // For ACCEPTED status, update the request
     const friendRequest = await Friend.findOneAndUpdate(
       { 
         _id: requestId, 
