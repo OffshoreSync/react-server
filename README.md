@@ -1,7 +1,7 @@
 # OffshoreSync Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.0.6-blue.svg)](https://semver.org)
+[![Version](https://img.shields.io/badge/version-1.0.7-blue.svg)](https://semver.org)
 
 This is the backend server for OffshoreSync, providing the API and database management for the offshore work schedule management system.
 
