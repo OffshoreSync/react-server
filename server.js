@@ -216,8 +216,10 @@ const emailVerificationLimiter = rateLimit({
 // Mount auth routes
 const authRoutes = require('./routes/auth');
 const passwordResetRoutes = require('./routes/passwordReset');
+const notificationRoutes = require('./routes/notifications');
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/password', passwordResetRoutes);
+apiRouter.use('/notifications', notificationRoutes);
 
 // Public email verification endpoint
 apiRouter.post('/verify-email', emailVerificationLimiter, async (req, res) => {

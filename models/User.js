@@ -17,6 +17,21 @@ const WorkingRegimeSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
+const FCMTokenSchema = new mongoose.Schema({
+  token: {
+    type: String,
+    required: true
+  },
+  device: {
+    type: String,
+    default: 'Unknown device'
+  },
+  lastUsed: {
+    type: Date,
+    default: Date.now
+  }
+}, { _id: false });
+
 const RefreshTokenSchema = new mongoose.Schema({
   token: {
     type: String,
@@ -171,6 +186,33 @@ const UserSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
+  },
+  fcmTokens: [FCMTokenSchema],
+  notificationPreferences: {
+    friendRequests: {
+      type: Boolean,
+      default: true
+    },
+    friendAccepted: {
+      type: Boolean,
+      default: true
+    },
+    workCycleUpdates: {
+      type: Boolean,
+      default: true
+    },
+    calendarEvents: {
+      type: Boolean,
+      default: true
+    },
+    appUpdates: {
+      type: Boolean,
+      default: true
+    },
+    systemAnnouncements: {
+      type: Boolean,
+      default: true
+    }
   }
 }, {
   timestamps: true

@@ -1878,6 +1878,9 @@ router.get('/all-users', async (req, res) => {
 // Import Friend model
 const Friend = require('../models/Friend');
 
+// Import notification utilities
+const { sendFriendRequestNotification, sendFriendAcceptedNotification } = require('../utils/notificationUtils');
+
 // Send Friend Request
 router.post('/friend-request', async (req, res) => {
   try {
@@ -1939,8 +1942,9 @@ router.post('/friend-request', async (req, res) => {
     // Populate the friend request with user details for notification purposes
     await newFriendRequest.populate('user friend', 'fullName email profilePicture company unitName');
 
-    // Optional: Send notification to the target user
-    // You can implement this later with a notification system
+    // Send notification to the target user
+    const sender = await User.findById(currentUserId).select('fullName email profilePicture');
+    await sendFriendRequestNotification(friendId, sender);
 
     res.status(201).json({ 
       message: 'Friend request sent successfully', 
@@ -2015,6 +2019,10 @@ router.put('/friend-request/:requestId', async (req, res) => {
           unitName: friendUser.unitName || '',
           sharingPreferences: friendRequest.sharingPreferences || { allowScheduleSync: false }
         };
+        
+        // Send notification to the requester that their request was accepted
+        const currentUser = await User.findById(currentUserId).select('fullName email profilePicture');
+        await sendFriendAcceptedNotification(friendRequest.user, currentUser);
       }
     }
 
