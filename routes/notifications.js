@@ -166,6 +166,55 @@ router.post('/register-token', auth, async (req, res) => {
 });
 
 /**
+ * @route   POST api/notifications/unregister-token
+ * @desc    Unregister an FCM token for the user (during logout)
+ * @access  Private
+ */
+router.post('/unregister-token', auth, async (req, res) => {
+  try {
+    const { token } = req.body;
+    const userId = req.user.id;
+    
+    console.log(`Unregistering FCM token for user ${userId}`);
+    
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Check if user has FCM tokens
+    if (!user.fcmTokens || user.fcmTokens.length === 0) {
+      return res.json({ success: true, message: 'No tokens to unregister' });
+    }
+    
+    // Remove the specified token
+    const initialTokenCount = user.fcmTokens.length;
+    user.fcmTokens = user.fcmTokens.filter(t => t.token !== token);
+    
+    // If we removed a token, save the user
+    if (initialTokenCount !== user.fcmTokens.length) {
+      await user.save();
+      console.log(`Removed FCM token for user ${userId}. Tokens remaining: ${user.fcmTokens.length}`);
+    } else {
+      console.log(`Token not found for user ${userId}`);
+    }
+    
+    res.json({ 
+      success: true,
+      message: 'FCM token unregistered successfully',
+      tokenCount: user.fcmTokens.length
+    });
+  } catch (error) {
+    console.error('Error unregistering FCM token:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
  * @route   PUT api/notifications/preferences
  * @desc    Update user notification preferences
  * @access  Private
