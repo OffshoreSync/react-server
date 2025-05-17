@@ -115,6 +115,12 @@ const UserSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  preBoardDays: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 7
+  },
   workSchedule: {
     type: Object,
     default: {}

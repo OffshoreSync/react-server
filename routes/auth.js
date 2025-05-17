@@ -464,6 +464,7 @@ const createUserResponse = (user) => ({
     onDutyDays: 28,
     offDutyDays: 28
   },
+  preBoardDays: user.preBoardDays !== undefined ? user.preBoardDays : 0,
   workSchedule: user.workSchedule || {}
 });
 
@@ -639,6 +640,7 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       country,
       company,
       unitName,
+      preBoardDays, // Add pre-board days field
       googleLogin // New flag
     } = req.body;
 
@@ -782,6 +784,7 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       country,
       company: company || null,
       unitName: unitName || null,
+      preBoardDays: preBoardDays !== undefined ? preBoardDays : 0, // Set pre-board days (default to 0 if not provided)
       isGoogleUser: googleLogin || false,
       profilePicture: googleLogin ? undefined : null, // Set profilePicture to null for non-Google users
       isVerified: googleLogin || false,
@@ -906,6 +909,7 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
         isVerified: true,
         country: countryCode,
         offshoreRole: 'Support',
+        preBoardDays: 0, // Set default pre-board days to 0
         workingRegime: {
           onDutyDays: 28,
           offDutyDays: 28
@@ -1067,6 +1071,7 @@ router.post('/google-login-with-calendar', async (req, res) => {
         isVerified: true,
         country: 'US', // Default country code: US
         offshoreRole: 'Support', // Default role: Support
+        preBoardDays: 0, // Set default pre-board days to 0
         workingRegime: {
           onDutyDays: 28,
           offDutyDays: 28
@@ -1346,7 +1351,8 @@ router.put('/update-profile', async (req, res) => {
       company, 
       workSchedule,
       country,
-      unitName
+      unitName,
+      preBoardDays
     } = req.body;
 
     // Update user fields with explicit preservation
@@ -1357,6 +1363,12 @@ router.put('/update-profile', async (req, res) => {
     if (workingRegime) user.workingRegime = workingRegime;
     if (company) user.company = company;
     if (workSchedule) user.workSchedule = workSchedule;
+    // Handle preBoardDays (explicitly check for 0 since it's a valid value)
+    if (preBoardDays !== undefined) {
+      safeLog('Incoming preBoardDays:', preBoardDays);
+      safeLog('Existing user preBoardDays:', user.preBoardDays);
+      user.preBoardDays = preBoardDays;
+    }
     
     // Explicitly handle country and unitName with logging
     safeLog('Incoming country:', country);
