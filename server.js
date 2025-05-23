@@ -221,6 +221,46 @@ apiRouter.use('/auth', authRoutes);
 apiRouter.use('/password', passwordResetRoutes);
 apiRouter.use('/notifications', notificationRoutes);
 
+// Public username availability check endpoint
+apiRouter.get('/check-username', async (req, res) => {
+  try {
+    const { username } = req.query;
+    
+    if (!username) {
+      return res.status(400).json({ message: 'Username parameter is required' });
+    }
+    
+    // Check if the username exists in the database
+    const existingUser = await User.findOne({ username: username });
+    
+    // Return whether the username is available
+    return res.json({ available: !existingUser });
+  } catch (error) {
+    console.error('Error checking username availability:', error);
+    return res.status(500).json({ message: 'Server error checking username availability' });
+  }
+});
+
+// Public email availability check endpoint
+apiRouter.get('/check-email', async (req, res) => {
+  try {
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({ message: 'Email parameter is required' });
+    }
+    
+    // Check if the email exists in the database
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    
+    // Return whether the email is available
+    return res.json({ available: !existingUser });
+  } catch (error) {
+    console.error('Error checking email availability:', error);
+    return res.status(500).json({ message: 'Server error checking email availability' });
+  }
+});
+
 // Public email verification endpoint
 apiRouter.post('/verify-email', emailVerificationLimiter, async (req, res) => {
   try {
