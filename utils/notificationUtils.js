@@ -103,32 +103,98 @@ const sendWorkCycleUpdateNotification = async (recipientId, cycleData) => {
   }
 };
 
+// sendCalendarEventNotification function removed - all calendar notifications are now either reminders or invites
+
 /**
- * Send a calendar event notification
+ * Send a calendar event reminder notification
  * @param {string} recipientId - The recipient user ID
  * @param {object} eventData - The calendar event data
+ * @param {number} minutesBefore - Minutes before the event to send the reminder
  * @returns {Promise<object>} - Result of the notification operation
  */
-const sendCalendarEventNotification = async (recipientId, eventData) => {
+const sendEventReminderNotification = async (recipientId, eventData, minutesBefore = 30) => {
   try {
     const eventDate = new Date(eventData.start).toLocaleDateString();
+    const eventTime = new Date(eventData.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    let reminderText;
+    if (minutesBefore >= 60) {
+      const hours = Math.floor(minutesBefore / 60);
+      reminderText = `${hours} hour${hours > 1 ? 's' : ''}`;
+    } else {
+      reminderText = `${minutesBefore} minute${minutesBefore > 1 ? 's' : ''}`;
+    }
+    
+    // Create a direct link to open the event
+    const eventLink = `/dashboard?openEvent=${eventData.id}`;
+    
+    safeLog(`Creating event reminder with direct link: ${eventLink}`);
     
     return await notificationService.sendNotification(
       recipientId,
-      'CALENDAR_EVENT',
+      'EVENT',
       {
-        title: 'Calendar Event',
-        body: `New event: ${eventData.title} on ${eventDate}`
+        title: 'Event Reminder',
+        body: `${eventData.title} starts in ${reminderText} (${eventTime})`
       },
       {
         eventId: eventData.id,
         eventTitle: eventData.title,
         eventStart: eventData.start,
-        eventEnd: eventData.end
+        eventEnd: eventData.end,
+        eventDate: new Date(eventData.start).toISOString().split('T')[0], // YYYY-MM-DD format for URL params
+        subtype: 'REMINDER',
+        minutesBefore,
+        // Add direct link to open the event
+        link: eventLink,
+        clickAction: 'OPEN_EVENT'
       }
     );
   } catch (error) {
-    safeLog('Error sending calendar event notification:', error);
+    safeLog('Error sending event reminder notification:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Send a calendar event invite notification
+ * @param {string} recipientId - The recipient user ID
+ * @param {object} eventData - The calendar event data
+ * @param {object} sender - The user who sent the invite
+ * @returns {Promise<object>} - Result of the notification operation
+ */
+const sendEventInviteNotification = async (recipientId, eventData, sender) => {
+  try {
+    const eventDate = new Date(eventData.start).toLocaleDateString();
+    
+    // Create a direct link to open the event
+    const eventLink = `/dashboard?openEvent=${eventData.id}`;
+    
+    safeLog(`Creating event invitation with direct link: ${eventLink}`);
+    
+    return await notificationService.sendNotification(
+      recipientId,
+      'EVENT',
+      {
+        title: 'Event Invitation',
+        body: `${sender.fullName} invited you to "${eventData.title}" on ${eventDate}`
+      },
+      {
+        eventId: eventData.id,
+        eventTitle: eventData.title,
+        eventStart: eventData.start,
+        eventEnd: eventData.end,
+        eventDate: new Date(eventData.start).toISOString().split('T')[0], // YYYY-MM-DD format for URL params
+        subtype: 'INVITE',
+        senderId: sender._id.toString(),
+        senderName: sender.fullName,
+        // Add direct link to open the event
+        link: eventLink,
+        clickAction: 'OPEN_EVENT'
+      }
+    );
+  } catch (error) {
+    safeLog('Error sending event invite notification:', error);
     return { success: false, error: error.message };
   }
 };
@@ -186,7 +252,8 @@ module.exports = {
   sendFriendRequestNotification,
   sendFriendAcceptedNotification,
   sendWorkCycleUpdateNotification,
-  sendCalendarEventNotification,
+  sendEventReminderNotification,
+  sendEventInviteNotification,
   sendAppUpdateNotification,
   sendSystemAnnouncement
 };

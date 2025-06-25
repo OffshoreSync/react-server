@@ -88,8 +88,16 @@ const sendNotification = async (userId, type, notification, data = {}) => {
     }
     
     // Check user preferences if they exist
-    if (user.notificationPreferences && user.notificationPreferences[type] === false) {
-      console.log(`User ${userId} has disabled ${type} notifications`);
+    let preferenceKey = type;
+    
+    // For calendar event subtypes, we use the calendarEvents preference
+    if (type === 'CALENDAR_EVENT' && data.subtype) {
+      console.log(`Processing calendar event with subtype: ${data.subtype}`);
+      preferenceKey = 'calendarEvents';
+    }
+    
+    if (user.notificationPreferences && user.notificationPreferences[preferenceKey] === false) {
+      console.log(`User ${userId} has disabled ${preferenceKey} notifications`);
       return { success: false, error: 'User has disabled this notification type' };
     }
     
