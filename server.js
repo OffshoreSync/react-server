@@ -106,6 +106,8 @@ const allowedOrigins = [
   'capacitor://localhost',
   'ionic://localhost',
   'http://localhost',
+  'https://react-client-static.onrender.com',  // Render domain frontend
+  'https://react-client-staging.onrender.com',  // Render domain staging frontend
   null // allow null origin for service workers
 ];
 
