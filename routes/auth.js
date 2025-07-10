@@ -993,20 +993,22 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
 // Google login with calendar scope
 router.post('/google-login-with-calendar', async (req, res) => {
   try {
-    const { code } = req.body;
+    const { code, redirectUri } = req.body;
     
     if (!code) {
       return res.status(400).json({ message: 'Authorization code is required' });
     }
     
-    safeLog('Received Google auth code for login with calendar scope');
+    // Use the redirectUri from the client if provided, otherwise fall back to environment variable
+    const finalRedirectUri = redirectUri || process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000';
+    safeLog(`Received Google auth code for login with calendar scope, using redirect URI: ${finalRedirectUri}`);
     
     // Exchange the authorization code for tokens
     const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
+      redirect_uri: finalRedirectUri,
       grant_type: 'authorization_code'
     });
     
