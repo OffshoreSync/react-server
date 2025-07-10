@@ -128,7 +128,7 @@ router.get('/:id', auth, async (req, res) => {
 router.post('/', auth, async (req, res) => {
   try {
     const { 
-      title, 
+      title,
       description, 
       startDate, 
       endDate, 
@@ -138,7 +138,9 @@ router.post('/', auth, async (req, res) => {
       isAllDay, 
       sharedWith, 
       recurrence,
-      reminders 
+      reminders,
+      isTaskEvent,
+      tasks
     } = req.body;
 
     // Validate dates
@@ -180,7 +182,9 @@ router.post('/', auth, async (req, res) => {
       isAllDay: isAllDay || false,
       sharedWith: processedSharedWith,
       recurrence,
-      reminders: eventReminders
+      reminders: eventReminders,
+      isTaskEvent: isTaskEvent || false,
+      tasks: isTaskEvent && Array.isArray(tasks) ? tasks : []
     });
 
     const savedEvent = await newEvent.save();
@@ -239,7 +243,9 @@ router.put('/:id', auth, async (req, res) => {
       isAllDay, 
       sharedWith, 
       recurrence,
-      reminders 
+      reminders,
+      isTaskEvent,
+      tasks 
     } = req.body;
     
     // Find the event
@@ -281,6 +287,28 @@ router.put('/:id', auth, async (req, res) => {
         ...event.reminders,
         ...reminders
       };
+    }
+    
+    // Update task event properties if provided
+    if (isTaskEvent !== undefined) event.isTaskEvent = isTaskEvent;
+    
+    // Handle tasks array updates
+    if (Array.isArray(tasks)) {
+      // For existing tasks, preserve the completed status and completedAt
+      const updatedTasks = tasks.map(newTask => {
+        // Try to find existing task with same text to preserve completion status
+        const existingTask = event.tasks.find(t => t.text === newTask.text);
+        if (existingTask) {
+          return {
+            text: newTask.text,
+            completed: newTask.completed !== undefined ? newTask.completed : existingTask.completed,
+            completedAt: newTask.completed && !existingTask.completed ? new Date() : existingTask.completedAt
+          };
+        }
+        return newTask;
+      });
+      
+      event.tasks = updatedTasks;
     }
     
     // Only the owner can update sharing settings

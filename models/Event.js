@@ -4,6 +4,7 @@ const Schema = mongoose.Schema;
 /**
  * Event Schema for custom user-created calendar events
  * These events are separate from the work cycle visualization
+ * Supports both regular events and task-based events
  */
 const EventSchema = new Schema({
   // User who created the event
@@ -23,6 +24,25 @@ const EventSchema = new Schema({
     type: String,
     trim: true
   },
+  // Task event functionality
+  isTaskEvent: {
+    type: Boolean,
+    default: false
+  },
+  tasks: [{
+    text: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    completed: {
+      type: Boolean,
+      default: false
+    },
+    completedAt: {
+      type: Date
+    }
+  }],
   startDate: {
     type: Date,
     required: true,
