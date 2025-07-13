@@ -132,7 +132,7 @@ const sendEventReminderNotification = async (recipientId, eventData, minutesBefo
     
     return await notificationService.sendNotification(
       recipientId,
-      'EVENT',
+      'CALENDAR_EVENT',
       {
         title: 'Event Reminder',
         body: `${eventData.title} starts in ${reminderText} (${eventTime})`
@@ -174,7 +174,7 @@ const sendEventInviteNotification = async (recipientId, eventData, sender) => {
     
     return await notificationService.sendNotification(
       recipientId,
-      'EVENT',
+      'CALENDAR_EVENT',
       {
         title: 'Event Invitation',
         body: `${sender.fullName} invited you to "${eventData.title}" on ${eventDate}`
