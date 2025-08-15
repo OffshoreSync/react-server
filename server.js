@@ -225,6 +225,15 @@ apiRouter.use('/password', passwordResetRoutes);
 apiRouter.use('/notifications', notificationRoutes);
 apiRouter.use('/events', eventRoutes);
 
+// Health check endpoint for connectivity testing
+apiRouter.head('/health', (req, res) => {
+  res.status(200).end();
+});
+
+apiRouter.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Public username availability check endpoint
 apiRouter.get('/check-username', async (req, res) => {
   try {
