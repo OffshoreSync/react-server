@@ -32,74 +32,6 @@ app.use(helmet({
   }
 }));
 
-// CSRF Protection Middleware
-const generateCSRFToken = () => {
-  return crypto.randomBytes(32).toString('hex');
-};
-
-const csrfProtection = (req, res, next) => {
-  // Always allow safe methods
-  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
-    return next();
-  }
-
-  // Completely exempt routes (minimal set)
-  const exemptRoutes = [
-    '/api/auth/google-login',
-    '/api/auth/google-login-with-calendar',
-    '/api/auth/google-calendar-token',
-    '/api/auth/check-session',
-    '/api/csrf-token',
-    '/api/auth/register',
-    '/api/auth/login',
-    '/api/auth/refresh',
-    '/api/password/request',
-    '/api/password/request-reset',
-    '/api/password/reset',
-    '/api/password/verify-token',
-    '/api/verify-email'
-  ];
-
-  if (exemptRoutes.some(route => req.path.startsWith(route))) {
-    return next();
-  }
-
-  // Check for JWT token in Authorization header
-  const token = req.headers.authorization?.split(' ')[1];
-  if (token) {
-    try {
-      // Verify the token to ensure it's valid
-      jwt.verify(token, process.env.JWT_SECRET);
-      // If token is valid, we can skip CSRF for authenticated routes
-      return next();
-    } catch (error) {
-      // Token is invalid, continue with CSRF validation
-      safeLog('Invalid JWT token, proceeding with CSRF check', { path: req.path });
-    }
-  }
-
-  // Validate CSRF for other routes
-  const csrfCookie = req.cookies['XSRF-TOKEN'];
-  const csrfHeader = req.headers['x-csrf-token'] || req.headers['x-xsrf-token'];
-
-  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
-    safeLog('CSRF Token Validation Failed', {
-      path: req.path,
-      method: req.method,
-      hasCookie: !!csrfCookie,
-      hasHeader: !!csrfHeader,
-      tokensMatch: csrfCookie === csrfHeader
-    });
-
-    return res.status(403).json({ 
-      message: 'CSRF token validation failed',
-      error: 'INVALID_CSRF_TOKEN'
-    });
-  }
-
-  next();
-};
-
 // CORS configuration
 const allowedOrigins = [
   process.env.REACT_APP_FRONTEND_URL || 'http://localhost:3000',
@@ -192,6 +124,79 @@ app.use(express.urlencoded({ extended: true }));
 
 // Logging middleware
 app.use(morgan('dev'));
+
+// CSRF Protection Middleware
+const generateCSRFToken = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
+// Add health check endpoint before CSRF protection
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+const csrfProtection = (req, res, next) => {
+  // Always allow safe methods
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+
+  // Completely exempt routes (minimal set)
+  const exemptRoutes = [
+    '/api/auth/google-login',
+    '/api/auth/google-login-with-calendar',
+    '/api/auth/google-calendar-token',
+    '/api/auth/check-session',
+    '/api/csrf-token',
+    '/api/auth/register',
+    '/api/auth/login',
+    '/api/auth/refresh',
+    '/api/password/request',
+    '/api/password/request-reset',
+    '/api/password/reset',
+    '/api/password/verify-token',
+    '/api/verify-email'
+  ];
+
+  if (exemptRoutes.some(route => req.path.startsWith(route))) {
+    return next();
+  }
+
+  // Check for JWT token in Authorization header
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token) {
+    try {
+      // Verify the token to ensure it's valid
+      jwt.verify(token, process.env.JWT_SECRET);
+      // If token is valid, we can skip CSRF for authenticated routes
+      return next();
+    } catch (error) {
+      // Token is invalid, continue with CSRF validation
+      safeLog('Invalid JWT token, proceeding with CSRF check', { path: req.path });
+    }
+  }
+
+  // Validate CSRF for other routes
+  const csrfCookie = req.cookies['XSRF-TOKEN'];
+  const csrfHeader = req.headers['x-csrf-token'] || req.headers['x-xsrf-token'];
+
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    safeLog('CSRF Token Validation Failed', {
+      path: req.path,
+      method: req.method,
+      hasCookie: !!csrfCookie,
+      hasHeader: !!csrfHeader,
+      tokensMatch: csrfCookie === csrfHeader
+    });
+
+    return res.status(403).json({ 
+      message: 'CSRF token validation failed',
+      error: 'INVALID_CSRF_TOKEN'
+    });
+  }
+
+  next();
+};
 
 app.use(csrfProtection);
 
