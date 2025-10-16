@@ -1563,6 +1563,132 @@ router.get('/profile', async (req, res) => {
   }
 });
 
+// Get User Profile by ID (for viewing other users)
+router.get('/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Get token from headers for authentication
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+
+    // Find the user
+    const user = await User.findById(userId).select('-password -refreshTokens -verificationToken -googleCalendarToken -googleCalendarRefreshToken');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if viewing own profile or if they are friends
+    const isOwnProfile = decoded.userId === userId;
+    let isFriend = false;
+
+    if (!isOwnProfile) {
+      const friendship = await Friend.findOne({
+        $or: [
+          { user: decoded.userId, friend: userId, status: 'ACCEPTED' },
+          { user: userId, friend: decoded.userId, status: 'ACCEPTED' }
+        ]
+      });
+      isFriend = !!friendship;
+    }
+
+    // Calculate friend count (number of accepted friendships)
+    const friendCount = await Friend.countDocuments({
+      $or: [
+        { user: userId, status: 'ACCEPTED' },
+        { friend: userId, status: 'ACCEPTED' }
+      ]
+    });
+
+    // Return different levels of info based on relationship
+    const publicProfile = {
+      id: user._id,
+      _id: user._id,
+      username: user.username,
+      fullName: user.fullName,
+      offshoreRole: user.offshoreRole,
+      offshorePosition: user.offshorePosition,
+      bio: user.bio || '',
+      country: user.country,
+      profilePicture: user.profilePicture,
+      isVerified: user.isVerified,
+      isGoogleUser: user.isGoogleUser,
+      friendCount: friendCount
+    };
+
+    // Add more details if friend or own profile
+    if (isOwnProfile || isFriend) {
+      publicProfile.company = user.company;
+      publicProfile.unitName = user.unitName;
+      publicProfile.workingRegime = user.workingRegime;
+      publicProfile.preBoardDays = user.preBoardDays;
+      publicProfile.workCycles = user.workCycles;
+      publicProfile.email = user.email;
+    }
+
+    res.json(publicProfile);
+  } catch (error) {
+    safeLog('Error fetching user profile:', error, 'error');
+    res.status(500).json({ message: 'Server error fetching user profile' });
+  }
+});
+
+// Get friendship status with a specific user
+router.get('/friends/status/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Get token from headers
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+
+    const currentUserId = decoded.userId;
+
+    // Check if it's own profile
+    if (currentUserId === userId) {
+      return res.json({ status: 'OWN_PROFILE' });
+    }
+
+    // Check friendship status
+    const friendship = await Friend.findOne({
+      $or: [
+        { user: currentUserId, friend: userId },
+        { user: userId, friend: currentUserId }
+      ]
+    });
+
+    if (!friendship) {
+      return res.json({ status: 'NONE' });
+    }
+
+    res.json({ status: friendship.status });
+  } catch (error) {
+    safeLog('Error checking friendship status:', error, 'error');
+    res.status(500).json({ message: 'Server error checking friendship status' });
+  }
+});
+
 // Set Next On Board Date
 router.put('/set-onboard-date', async (req, res) => {
   try {
