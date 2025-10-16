@@ -458,6 +458,8 @@ const createUserResponse = (user) => ({
   profilePicture: user.profilePicture,
   isGoogleUser: user.isGoogleUser,
   offshoreRole: user.offshoreRole || 'Support',
+  offshorePosition: user.offshorePosition || null,
+  bio: user.bio || '',
   company: user.company || null,
   unitName: user.unitName || null,
   workingRegime: user.workingRegime || {
@@ -780,6 +782,8 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       password: googleLogin ? undefined : password, // Optional for Google users
       fullName,
       offshoreRole,
+      offshorePosition: req.body.offshorePosition || null,
+      bio: req.body.bio || '',
       workingRegime: userWorkingRegime,
       country,
       company: company || null,
@@ -835,6 +839,8 @@ router.post('/register', blockDisposableEmails, async (req, res) => {
       email: newUser.email,
       fullName: newUser.fullName,
       offshoreRole: newUser.offshoreRole,
+      offshorePosition: newUser.offshorePosition || null,
+      bio: newUser.bio || '',
       workingRegime: newUser.workingRegime,
       isGoogleUser: newUser.isGoogleUser,
       company: newUser.company || null,
@@ -909,6 +915,8 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
         isVerified: true,
         country: countryCode,
         offshoreRole: 'Support',
+        offshorePosition: null, // Will be set later by user
+        bio: '', // Empty by default
         preBoardDays: 0, // Set default pre-board days to 0
         workingRegime: {
           onDutyDays: 28,
@@ -1348,7 +1356,9 @@ router.put('/update-profile', async (req, res) => {
       username, 
       email, 
       fullName, 
-      offshoreRole, 
+      offshoreRole,
+      offshorePosition,
+      bio,
       workingRegime,
       company, 
       workSchedule,
@@ -1362,6 +1372,8 @@ router.put('/update-profile', async (req, res) => {
     if (email) user.email = email;
     if (fullName) user.fullName = fullName;
     if (offshoreRole) user.offshoreRole = offshoreRole;
+    if (offshorePosition !== undefined) user.offshorePosition = offshorePosition || null;
+    if (bio !== undefined) user.bio = bio || '';
     if (workingRegime) user.workingRegime = workingRegime;
     if (company) user.company = company;
     if (workSchedule) user.workSchedule = workSchedule;
@@ -1420,6 +1432,8 @@ router.put('/update-profile', async (req, res) => {
         email: user.email,
         fullName: user.fullName,
         offshoreRole: user.offshoreRole,
+        offshorePosition: user.offshorePosition || null,
+        bio: user.bio || '',
         workingRegime: user.workingRegime,
         company: user.company || null,
         workSchedule: user.workSchedule || {},

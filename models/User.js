@@ -89,6 +89,11 @@ const UserSchema = new mongoose.Schema({
       'Operations', 'Safety', 'Bridge'],
     required: true
   },
+  offshorePosition: {
+    type: String,
+    trim: true,
+    default: null
+  },
   workingRegime: {
     type: WorkingRegimeSchema,
     required: true,
@@ -109,6 +114,12 @@ const UserSchema = new mongoose.Schema({
     type: String,
     trim: true,
     default: null
+  },
+  bio: {
+    type: String,
+    trim: true,
+    maxlength: 160,
+    default: ''
   },
   country: {
     type: String,
