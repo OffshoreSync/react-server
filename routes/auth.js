@@ -1689,6 +1689,148 @@ router.get('/friends/status/:userId', async (req, res) => {
   }
 });
 
+// Get a specific user's friends list (public, basic info only)
+router.get('/user/:userId/friends', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const limit = parseInt(req.query.limit) || 4;
+    const skip = parseInt(req.query.skip) || 0;
+    const search = req.query.search || '';
+    const detailed = req.query.detailed === 'true'; // For dialog with mutual friend detection
+
+    // Get token from headers
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+
+    const currentUserId = decoded.userId;
+
+    // Build search filter
+    let searchFilter = {};
+    if (search) {
+      searchFilter = {
+        $or: [
+          { 'user.fullName': { $regex: search, $options: 'i' } },
+          { 'user.username': { $regex: search, $options: 'i' } },
+          { 'friend.fullName': { $regex: search, $options: 'i' } },
+          { 'friend.username': { $regex: search, $options: 'i' } }
+        ]
+      };
+    }
+
+    // Find all accepted friendships for the specified user
+    const friendships = await Friend.find({
+      $or: [
+        { user: userId, status: 'ACCEPTED' },
+        { friend: userId, status: 'ACCEPTED' }
+      ]
+    })
+    .populate('user', 'fullName username profilePicture country offshoreRole')
+    .populate('friend', 'fullName username profilePicture country offshoreRole');
+
+    // Extract and process friend data
+    let friends = friendships.map(friendship => {
+      const isInitiator = friendship.user._id.toString() === userId;
+      const friendData = isInitiator ? friendship.friend : friendship.user;
+      
+      return {
+        _id: friendData._id,
+        fullName: friendData.fullName,
+        username: friendData.username,
+        profilePicture: friendData.profilePicture,
+        country: friendData.country,
+        offshoreRole: friendData.offshoreRole
+      };
+    });
+
+    // Apply search filter if provided
+    if (search) {
+      friends = friends.filter(friend => 
+        friend.fullName.toLowerCase().includes(search.toLowerCase()) ||
+        friend.username.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+
+    // If detailed mode, check for mutual friends
+    if (detailed) {
+      // Get current user's friends to detect mutuals
+      const myFriendships = await Friend.find({
+        $or: [
+          { user: currentUserId, status: 'ACCEPTED' },
+          { friend: currentUserId, status: 'ACCEPTED' }
+        ]
+      });
+
+      const myFriendIds = myFriendships.map(f => {
+        const friendId = f.user.toString() === currentUserId ? f.friend.toString() : f.user.toString();
+        return friendId;
+      });
+
+      // Check pending requests and blocked users
+      const allMyRelationships = await Friend.find({
+        $or: [
+          { user: currentUserId },
+          { friend: currentUserId }
+        ]
+      });
+
+      const pendingIds = allMyRelationships
+        .filter(f => f.status === 'PENDING')
+        .map(f => f.user.toString() === currentUserId ? f.friend.toString() : f.user.toString());
+
+      const blockedIds = allMyRelationships
+        .filter(f => f.status === 'BLOCKED')
+        .map(f => f.user.toString() === currentUserId ? f.friend.toString() : f.user.toString());
+
+      // Add mutual status and friendship info
+      friends = friends.map(friend => {
+        const friendIdStr = friend._id.toString();
+        const isMutual = myFriendIds.includes(friendIdStr);
+        const isPending = pendingIds.includes(friendIdStr);
+        const isBlocked = blockedIds.includes(friendIdStr);
+        const isSelf = friendIdStr === currentUserId;
+
+        return {
+          ...friend,
+          isMutual,
+          isPending,
+          isBlocked,
+          isSelf
+        };
+      });
+
+      // Sort: mutual friends first, then others
+      friends.sort((a, b) => {
+        if (a.isMutual && !b.isMutual) return -1;
+        if (!a.isMutual && b.isMutual) return 1;
+        return a.fullName.localeCompare(b.fullName);
+      });
+    }
+
+    // Apply pagination
+    const total = friends.length;
+    const paginatedFriends = friends.slice(skip, skip + limit);
+
+    res.json({ 
+      friends: paginatedFriends,
+      total,
+      hasMore: skip + limit < total
+    });
+  } catch (error) {
+    safeLog('Error fetching user friends:', error, 'error');
+    res.status(500).json({ message: 'Server error fetching user friends' });
+  }
+});
+
 // Set Next On Board Date
 router.put('/set-onboard-date', async (req, res) => {
   try {
