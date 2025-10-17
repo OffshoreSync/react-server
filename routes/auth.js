@@ -2535,9 +2535,10 @@ router.get('/search-users', async (req, res) => {
       _id: { $ne: currentUserId },
       $or: [
         { fullName: { $regex: query, $options: 'i' } },
-        { email: { $regex: query, $options: 'i' } }
+        { email: { $regex: query, $options: 'i' } },
+        { username: { $regex: query, $options: 'i' } }
       ]
-    }).select('fullName email profilePicture company unitName');
+    }).select('fullName username email profilePicture company unitName country');
 
     // Get friend status for each user
     const friendships = await Friend.find({
@@ -2553,12 +2554,15 @@ router.get('/search-users', async (req, res) => {
       );
 
       return {
+        _id: user._id,
         id: user._id,
         fullName: user.fullName,
+        username: user.username,
         email: user.email,
         profilePicture: user.profilePicture,
         company: user.company || '',
         unitName: user.unitName || '',
+        country: user.country || '',
         friendshipStatus: friendship ? friendship.status : 'NONE'
       };
     });
