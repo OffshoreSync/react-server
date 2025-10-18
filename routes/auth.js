@@ -2348,8 +2348,8 @@ router.get('/friends', async (req, res) => {
         { friend: currentUserId, status: 'ACCEPTED' }
       ]
     })
-    .populate('user', 'fullName email profilePicture company unitName')
-    .populate('friend', 'fullName email profilePicture company unitName');
+    .populate('user', 'fullName username email profilePicture company unitName country offshoreRole')
+    .populate('friend', 'fullName username email profilePicture company unitName country offshoreRole');
 
     // Transform friendships to include friend details and mutual sync preferences
     const friends = friendships.map(friendship => {
@@ -2370,11 +2370,15 @@ router.get('/friends', async (req, res) => {
       
       return {
         _id: friendData._id,
+        id: friendData._id,
         fullName: friendData.fullName,
+        username: friendData.username,
         email: friendData.email,
         profilePicture: friendData.profilePicture,
         company: friendData.company || '',
         unitName: friendData.unitName || '',
+        country: friendData.country || '',
+        offshoreRole: friendData.offshoreRole || '',
         sharingPreferences: {
           // Main sync toggle for UI display - this is what the toggle in FriendManagement controls
           allowScheduleSync: myAllowSync,
@@ -2423,17 +2427,22 @@ router.get('/friend-requests', async (req, res) => {
       friend: currentUserId,
       status: 'PENDING',
       user: { $nin: blockedUserIds } // Exclude requests from blocked users
-    }).populate('user', 'fullName email profilePicture company unitName');
+    }).populate('user', 'fullName username email profilePicture company unitName country offshoreRole');
 
     const requests = pendingRequests.map(request => ({
       id: request._id,
+      _id: request._id,
       user: {
         id: request.user._id,
+        _id: request.user._id,
         fullName: request.user.fullName,
+        username: request.user.username,
         email: request.user.email,
         profilePicture: request.user.profilePicture,
         company: request.user.company || '',
-        unitName: request.user.unitName || ''
+        unitName: request.user.unitName || '',
+        country: request.user.country || '',
+        offshoreRole: request.user.offshoreRole || ''
       },
       requestedAt: request.requestedAt
     }));
