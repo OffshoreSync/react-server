@@ -1992,6 +1992,7 @@ router.put('/set-onboard-date', async (req, res) => {
         email: user.email,
         fullName: user.fullName,
         offshoreRole: user.offshoreRole,
+        offshorePosition: user.offshorePosition || null,
         company: user.company || null,
         workSchedule: {
           nextOnBoardDate: user.workSchedule.nextOnBoardDate,
@@ -2001,7 +2002,10 @@ router.put('/set-onboard-date', async (req, res) => {
         workCycles: user.workCycles,
         unitName: user.unitName || null,
         country: user.country || null,
-        isGoogleUser: user.isGoogleUser
+        isGoogleUser: user.isGoogleUser,
+        profilePicture: user.profilePicture,
+        bio: user.bio || '',
+        preBoardDays: user.preBoardDays || 0
       },
       token: newToken
     });
