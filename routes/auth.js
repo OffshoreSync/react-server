@@ -2355,7 +2355,25 @@ router.put('/friend-request/:requestId', async (req, res) => {
 router.get('/friends', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    if (!token) {
+      return res.status(401).json({ 
+        message: 'No token provided',
+        requiresReAuthentication: true 
+      });
+    }
+    
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtError) {
+      return res.status(401).json({ 
+        message: 'Invalid or expired token',
+        error: jwtError.name,
+        requiresReAuthentication: true 
+      });
+    }
+    
     const currentUserId = decoded.userId;
 
     // Find all accepted friendships for the current user
@@ -2368,8 +2386,29 @@ router.get('/friends', async (req, res) => {
     .populate('user', 'fullName username email profilePicture company unitName country offshoreRole')
     .populate('friend', 'fullName username email profilePicture company unitName country offshoreRole');
 
+    // Filter out friendships where either user no longer exists (deleted accounts)
+    const validFriendships = [];
+    const orphanedFriendshipIds = [];
+    
+    friendships.forEach(friendship => {
+      if (friendship.user && friendship.friend) {
+        validFriendships.push(friendship);
+      } else {
+        // Collect IDs of orphaned friendships for cleanup
+        orphanedFriendshipIds.push(friendship._id);
+        safeLog(`Found orphaned friendship ${friendship._id} - user: ${!!friendship.user}, friend: ${!!friendship.friend}`);
+      }
+    });
+    
+    // Clean up orphaned friendships asynchronously (don't block the response)
+    if (orphanedFriendshipIds.length > 0) {
+      Friend.deleteMany({ _id: { $in: orphanedFriendshipIds } })
+        .then(() => safeLog(`Cleaned up ${orphanedFriendshipIds.length} orphaned friendships`))
+        .catch(err => safeLog('Error cleaning up orphaned friendships:', err, 'error'));
+    }
+    
     // Transform friendships to include friend details and mutual sync preferences
-    const friends = friendships.map(friendship => {
+    const friends = validFriendships.map(friendship => {
       // Determine if current user is the initiator or receiver of friendship
       const isInitiator = friendship.user._id.toString() === currentUserId;
       const friendData = isInitiator ? friendship.friend : friendship.user;
@@ -2412,8 +2451,25 @@ router.get('/friends', async (req, res) => {
     res.status(200).json({ friends });
 
   } catch (error) {
-    safeLog('Get friends error:', redactSensitiveData(error), 'error');
-    res.status(500).json({ message: 'Server error retrieving friends' });
+    safeLog('Get friends error:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    }, 'error');
+    
+    // Check for specific error types
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        message: 'Invalid or expired token',
+        error: error.name,
+        requiresReAuthentication: true 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Server error retrieving friends',
+      error: error.message 
+    });
   }
 });
 
@@ -2446,7 +2502,21 @@ router.get('/friend-requests', async (req, res) => {
       user: { $nin: blockedUserIds } // Exclude requests from blocked users
     }).populate('user', 'fullName username email profilePicture company unitName country offshoreRole');
 
-    const requests = pendingRequests.map(request => ({
+    // Filter out requests where the user account no longer exists
+    const validRequests = pendingRequests.filter(request => request.user !== null);
+    
+    // Clean up orphaned requests asynchronously
+    const orphanedRequestIds = pendingRequests
+      .filter(request => request.user === null)
+      .map(request => request._id);
+    
+    if (orphanedRequestIds.length > 0) {
+      Friend.deleteMany({ _id: { $in: orphanedRequestIds } })
+        .then(() => safeLog(`Cleaned up ${orphanedRequestIds.length} orphaned friend requests`))
+        .catch(err => safeLog('Error cleaning up orphaned requests:', err, 'error'));
+    }
+
+    const requests = validRequests.map(request => ({
       id: request._id,
       _id: request._id,
       user: {
@@ -2467,8 +2537,25 @@ router.get('/friend-requests', async (req, res) => {
     res.status(200).json({ pendingRequests: requests });
 
   } catch (error) {
-    safeLog('Get pending requests error:', redactSensitiveData(error), 'error');
-    res.status(500).json({ message: 'Server error retrieving pending requests' });
+    safeLog('Get pending requests error:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    }, 'error');
+    
+    // Check for specific error types
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        message: 'Invalid or expired token',
+        error: error.name,
+        requiresReAuthentication: true 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Server error retrieving pending requests',
+      error: error.message 
+    });
   }
 });
 
