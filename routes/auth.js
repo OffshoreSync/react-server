@@ -1285,12 +1285,23 @@ router.delete('/delete-account', async (req, res) => {
       throw error;
     }
 
-    // Find and delete user
-    const user = await User.findByIdAndDelete(decoded.userId);
+    // Find user first (don't delete yet)
+    const user = await User.findById(decoded.userId);
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    // Unregister all FCM tokens before deleting the user
+    if (user.fcmTokens && user.fcmTokens.length > 0) {
+      safeLog(`Unregistering ${user.fcmTokens.length} FCM tokens for user ${user._id}`);
+      // Clear FCM tokens from user document
+      user.fcmTokens = [];
+      await user.save();
+    }
+
+    // Now delete the user
+    await User.findByIdAndDelete(decoded.userId);
 
     // Clear all auth-related cookies
     const cookiesToClear = ['token', 'refreshToken', 'user', 'XSRF-TOKEN'];
