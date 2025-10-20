@@ -225,10 +225,12 @@ const authRoutes = require('./routes/auth');
 const passwordResetRoutes = require('./routes/passwordReset');
 const notificationRoutes = require('./routes/notifications');
 const eventRoutes = require('./routes/events');
+const statsRoutes = require('./routes/stats');
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/password', passwordResetRoutes);
 apiRouter.use('/notifications', notificationRoutes);
 apiRouter.use('/events', eventRoutes);
+apiRouter.use('/stats', statsRoutes);
 
 // Health check endpoint for connectivity testing
 apiRouter.head('/health', (req, res) => {
