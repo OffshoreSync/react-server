@@ -467,7 +467,9 @@ const createUserResponse = (user) => ({
     offDutyDays: 28
   },
   preBoardDays: user.preBoardDays !== undefined ? user.preBoardDays : 0,
-  workSchedule: user.workSchedule || {}
+  workSchedule: user.workSchedule && Object.keys(user.workSchedule).length > 0
+    ? user.workSchedule
+    : { nextOnBoardDate: null, nextOffBoardDate: null }
 });
 
 // Rate limiting for token refresh

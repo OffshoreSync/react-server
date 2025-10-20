@@ -134,7 +134,10 @@ const UserSchema = new mongoose.Schema({
   },
   workSchedule: {
     type: Object,
-    default: {}
+    default: {
+      nextOnBoardDate: null,
+      nextOffBoardDate: null
+    }
   },
   workCycles: [{
     startDate: {
