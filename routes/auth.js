@@ -31,8 +31,14 @@ const validatePasswordComplexity = (password) => {
   // - At least one lowercase letter
   // - At least one number
   // - At least one special character
-  const complexityRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-  return complexityRegex.test(password);
+  // Match client-side validation: allow a wider range of special characters
+  const hasLowercase = /[a-z]/.test(password);
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasNumber = /\d/.test(password);
+  const hasSpecialChar = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password);
+  const hasMinLength = password.length >= 8;
+  
+  return hasLowercase && hasUppercase && hasNumber && hasSpecialChar && hasMinLength;
 };
 
 // Utility function for email validation
