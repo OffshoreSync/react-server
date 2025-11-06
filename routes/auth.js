@@ -463,7 +463,7 @@ const createUserResponse = (user) => ({
   workCycles: user.workCycles || [],
   profilePicture: user.profilePicture,
   isGoogleUser: user.isGoogleUser,
-  offshoreRole: user.offshoreRole || 'Support',
+  offshoreRole: user.offshoreRole || 'Deck',
   offshorePosition: user.offshorePosition || null,
   bio: user.bio || '',
   company: user.company || null,
@@ -922,7 +922,7 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
         profilePicture: picture,
         isVerified: true,
         country: countryCode,
-        offshoreRole: 'Support',
+        offshoreRole: 'Deck',
         offshorePosition: null, // Will be set later by user
         bio: '', // Empty by default
         preBoardDays: 0, // Set default pre-board days to 0
@@ -1088,7 +1088,7 @@ router.post('/google-login-with-calendar', async (req, res) => {
         profilePicture: googleUserInfo.picture,
         isVerified: true,
         country: 'US', // Default country code: US
-        offshoreRole: 'Support', // Default role: Support
+        offshoreRole: 'Deck', // Default role: Deck
         preBoardDays: 0, // Set default pre-board days to 0
         workingRegime: {
           onDutyDays: 28,
