@@ -2138,7 +2138,7 @@ router.get('/user-work-cycles/:userId', async (req, res) => {
 
     // Find target user
     const targetUser = await User.findById(userId)
-      .select('workCycles fullName username isGoogleUser');
+      .select('workCycles fullName username isGoogleUser preBoardDays');
 
     if (!targetUser) {
       return res.status(404).json({ message: 'User not found' });
@@ -2159,6 +2159,7 @@ router.get('/user-work-cycles/:userId', async (req, res) => {
       fullName: targetUser.fullName,
       username: targetUser.username,
       isGoogleUser: targetUser.isGoogleUser,
+      preBoardDays: targetUser.preBoardDays || 0,
       workCycles: sortedWorkCycles
     });
 
