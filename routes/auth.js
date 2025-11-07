@@ -258,6 +258,18 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid username or password' });
     }
 
+    // Migrate legacy offshore roles to new structure
+    const legacyRoleMigration = {
+      'Support': 'Catering',  // Default Support users to Catering
+      'Operations': 'Deck',
+      'Safety': 'HSE'
+    };
+    
+    if (legacyRoleMigration[user.offshoreRole]) {
+      safeLog(`Migrating legacy role ${user.offshoreRole} to ${legacyRoleMigration[user.offshoreRole]}`);
+      user.offshoreRole = legacyRoleMigration[user.offshoreRole];
+    }
+
     // Initialize workingRegime if not set
     if (!user.workingRegime) {
       user.workingRegime = {
@@ -949,6 +961,19 @@ router.post('/google-login', validateGoogleToken, async (req, res) => {
       }
     } else {
       safeLog('Updating existing user profile');
+      
+      // Migrate legacy offshore roles to new structure
+      const legacyRoleMigration = {
+        'Support': 'Catering',  // Default Support users to Catering
+        'Operations': 'Deck',
+        'Safety': 'HSE'
+      };
+      
+      if (legacyRoleMigration[user.offshoreRole]) {
+        safeLog(`Migrating legacy role ${user.offshoreRole} to ${legacyRoleMigration[user.offshoreRole]}`);
+        user.offshoreRole = legacyRoleMigration[user.offshoreRole];
+      }
+      
       // Update existing user's profile
       user.profilePicture = picture || user.profilePicture;
       user.isGoogleUser = true;
@@ -1052,6 +1077,18 @@ router.post('/google-login-with-calendar', async (req, res) => {
     let user = await User.findOne({ email: googleUserInfo.email });
     
     if (user) {
+      // Migrate legacy offshore roles to new structure
+      const legacyRoleMigration = {
+        'Support': 'Catering',  // Default Support users to Catering
+        'Operations': 'Deck',
+        'Safety': 'HSE'
+      };
+      
+      if (legacyRoleMigration[user.offshoreRole]) {
+        safeLog(`Migrating legacy role ${user.offshoreRole} to ${legacyRoleMigration[user.offshoreRole]}`);
+        user.offshoreRole = legacyRoleMigration[user.offshoreRole];
+      }
+      
       // Update existing user with Google info if needed
       if (!user.isGoogleUser) {
         user.isGoogleUser = true;
