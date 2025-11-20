@@ -357,15 +357,14 @@ app.get('/home', (req, res) => {
 });
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
-
-const connection = mongoose.connection;
-connection.once('open', () => {
-  safeLog('MongoDB database connection established successfully');
-});
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost/mern_app')
+  .then(() => {
+    safeLog('MongoDB database connection established successfully');
+  })
+  .catch((err) => {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
