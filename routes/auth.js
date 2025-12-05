@@ -474,6 +474,7 @@ const createUserResponse = (user) => ({
   nextOnboardDate: user.nextOnboardDate,
   workCycles: user.workCycles || [],
   profilePicture: user.profilePicture,
+  cloudinaryProfilePicture: user.cloudinaryProfilePicture,
   isGoogleUser: user.isGoogleUser,
   offshoreRole: user.offshoreRole || 'Deck',
   offshorePosition: user.offshorePosition || null,
@@ -1678,6 +1679,7 @@ router.get('/user/:userId', async (req, res) => {
       bio: user.bio || '',
       country: user.country,
       profilePicture: user.profilePicture,
+      cloudinaryProfilePicture: user.cloudinaryProfilePicture,
       isVerified: user.isVerified,
       isGoogleUser: user.isGoogleUser,
       friendCount: friendCount
@@ -1790,8 +1792,8 @@ router.get('/user/:userId/friends', async (req, res) => {
         { friend: userId, status: 'ACCEPTED' }
       ]
     })
-    .populate('user', 'fullName username profilePicture country offshoreRole')
-    .populate('friend', 'fullName username profilePicture country offshoreRole');
+    .populate('user', 'fullName username profilePicture cloudinaryProfilePicture isGoogleUser country offshoreRole')
+    .populate('friend', 'fullName username profilePicture cloudinaryProfilePicture isGoogleUser country offshoreRole');
 
     // Extract and process friend data
     let friends = friendships.map(friendship => {
@@ -1803,6 +1805,8 @@ router.get('/user/:userId/friends', async (req, res) => {
         fullName: friendData.fullName,
         username: friendData.username,
         profilePicture: friendData.profilePicture,
+        cloudinaryProfilePicture: friendData.cloudinaryProfilePicture,
+        isGoogleUser: friendData.isGoogleUser,
         country: friendData.country,
         offshoreRole: friendData.offshoreRole
       };
@@ -2427,8 +2431,8 @@ router.get('/friends', async (req, res) => {
         { friend: currentUserId, status: 'ACCEPTED' }
       ]
     })
-    .populate('user', 'fullName username email profilePicture company unitName country offshoreRole')
-    .populate('friend', 'fullName username email profilePicture company unitName country offshoreRole');
+    .populate('user', 'fullName username email profilePicture cloudinaryProfilePicture isGoogleUser company unitName country offshoreRole')
+    .populate('friend', 'fullName username email profilePicture cloudinaryProfilePicture isGoogleUser company unitName country offshoreRole');
 
     // Filter out friendships where either user no longer exists (deleted accounts)
     const validFriendships = [];
@@ -2475,6 +2479,8 @@ router.get('/friends', async (req, res) => {
         username: friendData.username,
         email: friendData.email,
         profilePicture: friendData.profilePicture,
+        cloudinaryProfilePicture: friendData.cloudinaryProfilePicture,
+        isGoogleUser: friendData.isGoogleUser,
         company: friendData.company || '',
         unitName: friendData.unitName || '',
         country: friendData.country || '',
@@ -2544,7 +2550,7 @@ router.get('/friend-requests', async (req, res) => {
       friend: currentUserId,
       status: 'PENDING',
       user: { $nin: blockedUserIds } // Exclude requests from blocked users
-    }).populate('user', 'fullName username email profilePicture company unitName country offshoreRole');
+    }).populate('user', 'fullName username email profilePicture cloudinaryProfilePicture isGoogleUser company unitName country offshoreRole');
 
     // Filter out requests where the user account no longer exists
     const validRequests = pendingRequests.filter(request => request.user !== null);
@@ -2570,6 +2576,8 @@ router.get('/friend-requests', async (req, res) => {
         username: request.user.username,
         email: request.user.email,
         profilePicture: request.user.profilePicture,
+        cloudinaryProfilePicture: request.user.cloudinaryProfilePicture,
+        isGoogleUser: request.user.isGoogleUser,
         company: request.user.company || '',
         unitName: request.user.unitName || '',
         country: request.user.country || '',

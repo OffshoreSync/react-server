@@ -18,10 +18,12 @@
   "author": "OffshoreSync Team",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-rekognition": "^3.943.0",
     "@aws-sdk/client-ses": "^3.943.0",
     "@aws-sdk/credential-providers": "^3.943.0",
     "axios": "^1.8.4",
     "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.8.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

@@ -47,6 +47,31 @@ const RefreshTokenSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
+const CloudinaryProfilePictureSchema = new mongoose.Schema({
+  url: {
+    type: String,
+    required: true
+  },
+  publicId: {
+    type: String,
+    required: true
+  },
+  moderationStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  },
+  uploadedAt: {
+    type: Date,
+    default: Date.now
+  },
+  moderationDetails: [{
+    name: String,
+    confidence: Number,
+    parent: String
+  }]
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
   username: {
     type: String,
@@ -170,6 +195,10 @@ const UserSchema = new mongoose.Schema({
   },
   profilePicture: {
     type: String
+  },
+  cloudinaryProfilePicture: {
+    type: CloudinaryProfilePictureSchema,
+    default: null
   },
   googleCalendarToken: {
     type: String,
