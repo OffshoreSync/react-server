@@ -248,7 +248,7 @@ UserSchema.statics.getPredefinedRegimes = function() {
 };
 
 // Hash password before saving
-UserSchema.pre('save', async function(next) {
+UserSchema.pre('save', async function() {
   // Only hash password if it has been modified or is new
   if (this.isModified('password') && !this.isGoogleUser && this.password) {
     try {
@@ -261,7 +261,7 @@ UserSchema.pre('save', async function(next) {
       // If password is already a hash, skip re-hashing
       if (this.password.startsWith('$2')) {
         safeLog('Password already appears to be hashed. Skipping re-hash.');
-        return next();
+        return;
       }
       
       // Generate salt and hash
@@ -276,10 +276,9 @@ UserSchema.pre('save', async function(next) {
       this.password = hashedPassword;
     } catch (error) {
       safeLog('Pre-save password hashing error:', redactSensitiveData(error));
-      return next(error);
+      throw error;
     }
   }
-  next();
 });
 
 // Method to compare password
