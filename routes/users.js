@@ -62,6 +62,16 @@ router.post('/profile-picture/upload',
 
       safeLog(`✅ Uploaded to Cloudinary: ${publicId}`);
 
+      // Validate dimensions (should be 1200x1200)
+      const { width, height } = uploadResult;
+      if (width !== 1200 || height !== 1200) {
+        safeLog(`❌ Invalid dimensions: ${width}x${height}. Expected 1200x1200. Deleting...`);
+        await cloudinary.uploader.destroy(publicId);
+        return res.status(400).json({ 
+          message: `Invalid image dimensions: ${width}x${height}. Please crop to 1200x1200.` 
+        });
+      }
+
       // 2. Moderate with AWS Rekognition
       safeLog('🔍 Starting content moderation...');
       const moderationResult = await moderateImageFromUrl(cloudinaryUrl);
