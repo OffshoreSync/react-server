@@ -118,9 +118,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Body parser middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Body parser middleware - increased limit for image uploads
+// Base64 encoding increases size by ~33%, so 10MB limit accommodates 5MB images
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logging middleware
 app.use(morgan('dev'));
