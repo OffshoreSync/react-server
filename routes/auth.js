@@ -2703,7 +2703,7 @@ router.get('/search-users', async (req, res) => {
         { email: { $regex: query, $options: 'i' } },
         { username: { $regex: query, $options: 'i' } }
       ]
-    }).select('fullName username email profilePicture company unitName country');
+    }).select('fullName username email profilePicture cloudinaryProfilePicture isGoogleUser company unitName country');
 
     // Get friend status for each user
     const friendships = await Friend.find({
@@ -2725,6 +2725,8 @@ router.get('/search-users', async (req, res) => {
         username: user.username,
         email: user.email,
         profilePicture: user.profilePicture,
+        cloudinaryProfilePicture: user.cloudinaryProfilePicture,
+        isGoogleUser: user.isGoogleUser,
         company: user.company || '',
         unitName: user.unitName || '',
         country: user.country || '',
