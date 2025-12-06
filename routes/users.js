@@ -48,7 +48,8 @@ router.post('/profile-picture/upload',
         folder: 'profile-pictures',
         public_id: `user_${userId}_${Date.now()}`,
         transformation: [
-          { width: 400, height: 400, crop: 'fill', gravity: 'face' },
+          // Store full resolution (client already compressed to 1200x1200)
+          // Apply quality and format optimizations only
           { quality: 'auto:good' },
           { fetch_format: 'auto' }
         ],
